@@ -1,0 +1,158 @@
+# StorOps identification rules — generic OS/temp caches not owned by one
+# specific application (see applications.yaml / ai-models.yaml for those).
+# Matched last, as a catch-all before falling through to "unknown".
+
+- id: windows-temp
+  application: Windows
+  category: os-temp
+  match:
+    path_patterns:
+      - "%TEMP%\\*"
+      - "%USERPROFILE%\\AppData\\Local\\Temp\\*"
+      - "C:\\Windows\\Temp\\*"
+  confidence: 0.85
+  owner: system
+  purpose: Scratch space used by installers, apps, and the OS for transient files.
+  deletable: true
+  migratable: false
+  cleanup:
+    risk: low
+    consequence: >
+      Generally safe to delete; a very small number of files may be
+      locked/in-use by a running process (StorOps skips locked files
+      rather than forcing deletion).
+
+- id: windows-update-cache
+  application: Windows Update
+  category: os-temp
+  match:
+    path_patterns:
+      - "%SYSTEMROOT%\\SoftwareDistribution\\Download\\*"
+      - "C:\\Windows\\SoftwareDistribution\\Download\\*"
+  confidence: 0.9
+  owner: system
+  purpose: Downloaded Windows Update installer packages, kept after install in case of rollback.
+  deletable: true
+  migratable: false
+  cleanup:
+    risk: low
+    consequence: Re-downloaded if an update needs to be reinstalled; no effect on already-installed updates.
+  notes: Stop the "Windows Update" service before clearing for a clean delete, or recommend the built-in Disk Cleanup "Windows Update Cleanup" option instead.
+
+- id: windows-error-reporting
+  application: Windows Error Reporting
+  category: os-temp
+  match:
+    path_patterns:
+      - "%PROGRAMDATA%\\Microsoft\\Windows\\WER\\*"
+      - "%LOCALAPPDATA%\\Microsoft\\Windows\\WER\\*"
+  confidence: 0.9
+  owner: system
+  purpose: Crash dump and error-report queue files.
+  deletable: true
+  migratable: false
+  cleanup:
+    risk: low
+    consequence: Only loses historical crash diagnostics; no functional impact.
+
+- id: windows-old
+  application: Windows.old
+  category: os-temp
+  match:
+    path_patterns:
+      - "?:\\Windows.old\\*"
+  confidence: 0.95
+  owner: system
+  purpose: The previous Windows installation, kept temporarily after a feature update to allow rollback.
+  deletable: true
+  migratable: false
+  cleanup:
+    risk: medium
+    consequence: >
+      Removes the ability to roll back to the previous Windows version.
+      Safe once the current version has been running stably, but StorOps
+      flags it MEDIUM (not LOW) because it forecloses an OS-level
+      recovery option, and recommends the built-in Disk Cleanup /
+      "Previous Windows installation(s)" option over a raw delete.
+
+- id: thumbnail-cache
+  application: Windows Explorer
+  category: os-temp
+  match:
+    path_patterns:
+      - "%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer\\thumbcache_*.db"
+  confidence: 0.85
+  owner: system
+  purpose: Cached thumbnail images for Explorer.
+  deletable: true
+  migratable: false
+  cleanup:
+    risk: low
+    consequence: Thumbnails are simply regenerated the next time folders are browsed.
+
+- id: delivery-optimization-cache
+  application: Windows Delivery Optimization
+  category: os-temp
+  match:
+    path_patterns:
+      - "%SYSTEMROOT%\\SoftwareDistribution\\DeliveryOptimization\\*"
+      - "%PROGRAMDATA%\\Microsoft\\Network\\Downloader\\*"
+  confidence: 0.85
+  owner: system
+  purpose: Peer-to-peer cached chunks of Windows Update/Store downloads, shared with other devices on the network.
+  deletable: true
+  migratable: false
+  cleanup:
+    risk: low
+    consequence: No functional loss; future downloads simply cannot be served from this local cache to peers.
+
+- id: prefetch
+  application: Windows Prefetch
+  category: os-temp
+  match:
+    path_patterns:
+      - "%SYSTEMROOT%\\Prefetch\\*"
+  confidence: 0.8
+  owner: system
+  purpose: Boot/application launch prefetch trace files used to speed up subsequent launches.
+  deletable: true
+  migratable: false
+  cleanup:
+    risk: low
+    consequence: Regenerated automatically; may cause a marginally slower next launch of affected apps.
+
+- id: crash-dumps
+  application: Windows Error Reporting (crash dumps)
+  category: os-temp
+  match:
+    path_patterns:
+      - "%LOCALAPPDATA%\\CrashDumps\\*"
+      - "%SYSTEMROOT%\\Minidump\\*"
+      - "%SYSTEMROOT%\\MEMORY.DMP"
+  confidence: 0.85
+  owner: system
+  purpose: Application/kernel crash dump files, sometimes large (full memory dumps can be several GB).
+  deletable: true
+  migratable: false
+  cleanup:
+    risk: low
+    consequence: Loses diagnostic data for past crashes only; no functional impact. Keep the most recent one if actively debugging a crash.
+
+- id: downloads-folder
+  application: Downloads
+  category: unknown
+  match:
+    path_patterns:
+      - "%USERPROFILE%\\Downloads\\*"
+  confidence: 0.4
+  owner: user
+  purpose: >
+    User-downloaded files of arbitrary, unknown type and value — installers,
+    archives, documents, media. StorOps cannot determine disposability from
+    location alone.
+  deletable: false
+  migratable: false
+  cleanup:
+    risk: high
+    consequence: Contents are unknown and may include unfinished work; StorOps surfaces this as a large-consumer candidate for the *user* to review, never auto-classifies individual files as safe to delete.
+  notes: Report largest/oldest files here for the user's own review rather than proposing bulk deletion.

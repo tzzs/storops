@@ -1,0 +1,179 @@
+# StorOps identification rules — AI/ML tooling: model weights and their
+# inference-tool caches. Matched after windows.yaml, before applications.yaml.
+# These are usually the single largest, most migration-worthy consumers of
+# disk space in an AI developer's environment (see docs/DESIGN.md §7).
+
+- id: lmstudio-models
+  application: LM Studio
+  category: ai-model-weights
+  match:
+    path_patterns:
+      - "%USERPROFILE%\\.lmstudio\\models\\*"
+      - "%USERPROFILE%\\.cache\\lm-studio\\models\\*"
+  confidence: 0.95
+  owner: user
+  purpose: >
+    Downloaded GGUF/MLX model weights managed by LM Studio.
+  deletable: false
+  migratable: true
+  migration:
+    method: app-config
+    config_hint: >
+      LM Studio → Settings → My Models → "Change model storage directory"
+      (writes the new path to ~/.lmstudio/.lmstudimrc / lmstudio.json).
+      Prefer this over a junction.
+    requires_app_closed: true
+  cleanup:
+    risk: high
+    consequence: >
+      Models must be re-downloaded from the source hub; some may be
+      multiple GB to tens of GB each on a slow link.
+  notes: Prefer migration over deletion — these are deliberate, expensive-to-replace downloads.
+
+- id: ollama-models
+  application: Ollama
+  category: ai-model-weights
+  match:
+    path_patterns:
+      - "%USERPROFILE%\\.ollama\\models\\*"
+  confidence: 0.95
+  owner: user
+  purpose: Downloaded model weights (manifests + blobs) managed by Ollama.
+  deletable: false
+  migratable: true
+  migration:
+    method: app-config
+    config_hint: >
+      Set the OLLAMA_MODELS environment variable to the new directory and
+      restart the Ollama service; do not just move the folder without also
+      setting this.
+    requires_app_closed: true
+  cleanup:
+    risk: high
+    consequence: Models must be re-pulled with `ollama pull`.
+
+- id: huggingface-cache
+  application: Hugging Face
+  category: ai-model-cache
+  match:
+    path_patterns:
+      - "%USERPROFILE%\\.cache\\huggingface\\*"
+      - "%USERPROFILE%\\.cache\\huggingface_hub\\*"
+  confidence: 0.95
+  owner: user
+  purpose: >
+    `huggingface_hub` local cache of downloaded model/dataset snapshots,
+    shared by transformers/diffusers/etc.
+  deletable: true
+  migratable: true
+  migration:
+    method: app-config
+    config_hint: >
+      Set the HF_HOME (or legacy TRANSFORMERS_CACHE/HF_HUB_CACHE)
+      environment variable to the new location before moving the data.
+    requires_app_closed: true
+  cleanup:
+    risk: medium
+    consequence: >
+      Cached models/datasets are re-downloaded on next use from the Hub;
+      no permanent loss, but can be tens of GB and slow to re-fetch.
+  notes: >
+    `huggingface-cli scan-cache` / `delete-cache` can identify unused
+    revisions for a lower-risk partial cleanup instead of deleting the
+    whole cache.
+
+- id: comfyui-models
+  application: ComfyUI
+  category: ai-model-weights
+  match:
+    path_patterns:
+      - "*\\ComfyUI\\models\\*"
+      - "*\\ComfyUI\\models\\checkpoints\\*"
+      - "*\\ComfyUI\\models\\loras\\*"
+  confidence: 0.85
+  owner: user
+  purpose: Stable Diffusion / image-gen checkpoints, LoRAs, VAEs, and related weights.
+  deletable: false
+  migratable: true
+  migration:
+    method: app-config
+    config_hint: >
+      ComfyUI reads model search paths from `extra_model_paths.yaml`;
+      add the new location there rather than moving files under the
+      install directory, or move the folder and update that file.
+    requires_app_closed: true
+  cleanup:
+    risk: high
+    consequence: Checkpoints/LoRAs are often large (2-7 GB each) and may not be trivially re-obtainable if custom-trained or from a since-removed source.
+
+- id: stable-diffusion-webui-models
+  application: Stable Diffusion WebUI
+  category: ai-model-weights
+  match:
+    path_patterns:
+      - "*\\stable-diffusion-webui\\models\\*"
+  confidence: 0.8
+  owner: user
+  purpose: Stable Diffusion checkpoints/LoRAs/embeddings for the AUTOMATIC1111/forge-style WebUI.
+  deletable: false
+  migratable: true
+  migration:
+    method: manual
+    config_hint: >
+      Move the folder and pass `--ckpt-dir` / `--lora-dir` (etc.) launch
+      arguments pointing at the new location, or use a junction.
+    requires_app_closed: true
+  cleanup:
+    risk: high
+    consequence: Same as ComfyUI — potentially hard to re-obtain custom/removed models.
+
+- id: pytorch-hub-cache
+  application: PyTorch
+  category: ai-model-cache
+  match:
+    path_patterns:
+      - "%USERPROFILE%\\.cache\\torch\\*"
+  confidence: 0.85
+  owner: user
+  purpose: torch.hub downloaded model checkpoints and TorchVision pretrained weights.
+  deletable: true
+  migratable: true
+  migration:
+    method: app-config
+    config_hint: Set the TORCH_HOME environment variable to relocate.
+  cleanup:
+    risk: medium
+    consequence: Re-downloaded on next use.
+
+- id: cuda-compute-cache
+  application: NVIDIA CUDA
+  category: ai-model-cache
+  match:
+    path_patterns:
+      - "%LOCALAPPDATA%\\NVIDIA\\ComputeCache\\*"
+      - "%LOCALAPPDATA%\\NVIDIA Corporation\\NV_Cache\\*"
+  confidence: 0.9
+  owner: user
+  purpose: Compiled GPU kernel cache (PTX/cubin) used to speed up repeated CUDA workloads.
+  deletable: true
+  migratable: false
+  cleanup:
+    risk: low
+    consequence: Silently and automatically rebuilt on next use; small one-time recompilation cost only.
+
+- id: whisper-cpp-ggml-models
+  application: whisper.cpp / GGML tools
+  category: ai-model-weights
+  match:
+    path_patterns:
+      - "%USERPROFILE%\\.cache\\whisper\\*"
+  confidence: 0.6
+  owner: user
+  purpose: Downloaded Whisper speech-recognition model weights.
+  deletable: false
+  migratable: true
+  migration:
+    method: manual
+  cleanup:
+    risk: medium
+    consequence: Re-downloaded on next use; usually small-to-mid sized (tens of MB to ~3 GB).
