@@ -7,10 +7,9 @@
 - id: windows-directory
   application: Windows
   category: os-system
-  match:
-    path_patterns:
-      - "%SYSTEMROOT%\\*"
-      - "C:\\Windows\\*"
+  path_patterns:
+    - "%SYSTEMROOT%\\*"
+    - "C:\\Windows\\*"
   confidence: 1.0
   owner: system
   purpose: >
@@ -18,140 +17,127 @@
     WinSxS component store, installed updates).
   deletable: false
   migratable: false
-  migration:
-    method: none
-  cleanup:
-    risk: critical
-    consequence: >
-      Modifying or deleting anything here can render Windows unbootable.
-      StorOps never touches this path.
+  migration_method: none
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Modifying or deleting anything here can render Windows unbootable.
+    StorOps never touches this path.
   notes: >
     WinSxS looks huge and "wasteful" but is the component store backing
     servicing/rollback; do not recommend deleting it. Point users to
-    `DISM /Online /Cleanup-Image /StartComponentCleanup` if genuinely needed,
+    DISM /Online /Cleanup-Image /StartComponentCleanup if genuinely needed,
     but StorOps itself does not execute that.
 
 - id: program-files
   application: Program Files
   category: os-system
-  match:
-    path_patterns:
-      - "%PROGRAMFILES%\\*"
-      - "%PROGRAMFILES(X86)%\\*"
-      - "C:\\Program Files\\*"
-      - "C:\\Program Files (x86)\\*"
+  path_patterns:
+    - "%PROGRAMFILES%\\*"
+    - "%PROGRAMFILES(X86)%\\*"
+    - "C:\\Program Files\\*"
+    - "C:\\Program Files (x86)\\*"
   confidence: 0.9
   owner: system
   purpose: Installed application binaries for all users.
   deletable: false
   migratable: false
-  cleanup:
-    risk: critical
-    consequence: >
-      Deleting installed program files breaks those applications; the
-      correct way to reclaim this space is to uninstall the application
-      through Windows, not to delete its folder.
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Deleting installed program files breaks those applications; the
+    correct way to reclaim this space is to uninstall the application
+    through Windows, not to delete its folder.
   notes: >
-    A specific, *identified* subfolder here (e.g. a known app's own
-    optional data cache) may still be handled by a more specific rule in
+    A specific, identified subfolder here (e.g. a known app's own optional
+    data cache) may still be handled by a more specific rule in
     applications.yaml — but the bare Program Files tree itself is never
     a cleanup/migration target.
 
 - id: programdata-system
   application: ProgramData
   category: os-system
-  match:
-    path_patterns:
-      - "%PROGRAMDATA%\\Microsoft\\*"
-      - "%PROGRAMDATA%\\Package Cache\\*"
-      - "C:\\ProgramData\\Microsoft\\*"
+  path_patterns:
+    - "%PROGRAMDATA%\\Microsoft\\*"
+    - "%PROGRAMDATA%\\Package Cache\\*"
+    - "C:\\ProgramData\\Microsoft\\*"
   confidence: 0.85
   owner: system
   purpose: Shared, all-user application/OS state managed by Windows or Microsoft components.
   deletable: false
   migratable: false
-  cleanup:
-    risk: critical
-    consequence: Can break OS updates, installers, or shared services.
+  cleanup_risk: critical
+  cleanup_consequence: Can break OS updates, installers, or shared services.
 
 - id: recycle-bin
   application: Recycle Bin
   category: os-system
-  match:
-    path_patterns:
-      - "*\\$Recycle.Bin\\*"
+  path_patterns:
+    - "*\\$Recycle.Bin\\*"
   confidence: 1.0
   owner: system
   purpose: Deleted files awaiting permanent removal.
   deletable: true
   migratable: false
-  cleanup:
-    risk: low
-    consequence: Files here are already user-deleted; emptying it is safe but StorOps still treats it as an explicit, confirmed action, not automatic.
+  cleanup_risk: low
+  cleanup_consequence: >
+    Files here are already user-deleted; emptying it is safe but StorOps
+    still treats it as an explicit, confirmed action, not automatic.
   notes: >
     Low risk in principle, but StorOps does not enumerate/touch this path
-    directly — recommend the user empty it via `Clear-RecycleBin` or the
+    directly — recommend the user empty it via Clear-RecycleBin or the
     Shell UI instead of StorOps deleting files inside it.
 
 - id: system-volume-information
   application: Windows System Restore
   category: os-system
-  match:
-    path_patterns:
-      - "*\\System Volume Information\\*"
+  path_patterns:
+    - "*\\System Volume Information\\*"
   confidence: 1.0
   owner: system
   purpose: Restore points and volume shadow copy data; normally inaccessible without elevation.
   deletable: false
   migratable: false
-  cleanup:
-    risk: critical
-    consequence: Breaks System Restore and shadow-copy-based backups.
+  cleanup_risk: critical
+  cleanup_consequence: Breaks System Restore and shadow-copy-based backups.
 
 - id: paging-hibernation-files
   application: Windows Virtual Memory
   category: os-system
-  match:
-    path_patterns:
-      - "?:\\pagefile.sys"
-      - "?:\\hiberfil.sys"
-      - "?:\\swapfile.sys"
+  path_patterns:
+    - "?:\\pagefile.sys"
+    - "?:\\hiberfil.sys"
+    - "?:\\swapfile.sys"
   confidence: 1.0
   owner: system
   purpose: Virtual memory paging file, hibernation image, and UWP swap file.
   deletable: false
   migratable: false
-  cleanup:
-    risk: critical
-    consequence: >
-      Deleting/moving these outside Windows' own memory-management settings
-      can cause boot failure or loss of hibernation. Configure page file
-      size via System Properties instead.
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Deleting/moving these outside Windows' own memory-management settings
+    can cause boot failure or loss of hibernation. Configure page file
+    size via System Properties instead.
 
 - id: user-profile-ntuser
   application: Windows User Profile
   category: os-system
-  match:
-    path_patterns:
-      - "%USERPROFILE%\\NTUSER.DAT*"
-      - "%USERPROFILE%\\ntuser.dat*"
+  path_patterns:
+    - "%USERPROFILE%\\NTUSER.DAT*"
+    - "%USERPROFILE%\\ntuser.dat*"
   confidence: 1.0
   owner: system
   purpose: The user's registry hive.
   deletable: false
   migratable: false
-  cleanup:
-    risk: critical
-    consequence: Corrupts the user's Windows profile.
+  cleanup_risk: critical
+  cleanup_consequence: Corrupts the user's Windows profile.
 
 - id: user-documents-desktop
   application: User Documents
   category: unknown
-  match:
-    path_patterns:
-      - "%USERPROFILE%\\Documents\\*"
-      - "%USERPROFILE%\\Desktop\\*"
-      - "%USERPROFILE%\\Pictures\\*"
+  path_patterns:
+    - "%USERPROFILE%\\Documents\\*"
+    - "%USERPROFILE%\\Desktop\\*"
+    - "%USERPROFILE%\\Pictures\\*"
   confidence: 0.6
   owner: user
   purpose: >
@@ -160,14 +146,16 @@
     OS path.
   deletable: false
   migratable: true
-  migration:
-    method: manual
-    config_hint: User-initiated move (e.g. relocate the "Documents" known folder via its Properties dialog), never automatic.
-  cleanup:
-    risk: critical
-    consequence: Irreplaceable personal data; StorOps never recommends deleting anything under here.
+  migration_method: manual
+  migration_config_hint: >
+    User-initiated move (e.g. relocate the "Documents" known folder via its
+    Properties dialog), never automatic.
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Irreplaceable personal data; StorOps never recommends deleting anything
+    under here.
   notes: >
-    Treated as critical for *deletion* purposes even though it is user
-    data, not system data — the bar for touching it automatically is the
-    same. Large files here should be surfaced to the user for their own
-    decision, never auto-classified as cleanup candidates.
+    Treated as critical for deletion purposes even though it is user data,
+    not system data — the bar for touching it automatically is the same.
+    Large files here should be surfaced to the user for their own decision,
+    never auto-classified as cleanup candidates.

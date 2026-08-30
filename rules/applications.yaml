@@ -6,118 +6,103 @@
 - id: npm-cache
   application: npm
   category: package-manager-cache
-  match:
-    path_patterns:
-      - "%APPDATA%\\npm-cache\\*"
-      - "%LOCALAPPDATA%\\npm-cache\\*"
+  path_patterns:
+    - "%APPDATA%\\npm-cache\\*"
+    - "%LOCALAPPDATA%\\npm-cache\\*"
   confidence: 0.9
   owner: user
   purpose: npm's downloaded package tarball cache.
   deletable: true
   migratable: true
-  migration:
-    method: manual
-    config_hint: "`npm config set cache <new-path>` to relocate."
-  cleanup:
-    risk: medium
-    consequence: Re-downloaded on next `npm install`; can noticeably slow the next install of large dependency trees.
+  migration_method: manual
+  migration_config_hint: "npm config set cache <new-path> to relocate."
+  cleanup_risk: medium
+  cleanup_consequence: >
+    Re-downloaded on next `npm install`; can noticeably slow the next
+    install of large dependency trees.
 
 - id: pnpm-store
   application: pnpm
   category: package-manager-cache
-  match:
-    path_patterns:
-      - "%LOCALAPPDATA%\\pnpm\\store\\*"
-      - "%USERPROFILE%\\.pnpm-store\\*"
+  path_patterns:
+    - "%LOCALAPPDATA%\\pnpm\\store\\*"
+    - "%USERPROFILE%\\.pnpm-store\\*"
   confidence: 0.9
   owner: user
   purpose: pnpm's content-addressable package store, shared/hard-linked across all local pnpm projects.
   deletable: true
   migratable: true
-  migration:
-    method: app-config
-    config_hint: "`pnpm config set store-dir <new-path>`."
-  cleanup:
-    risk: medium
-    consequence: >
-      Deleting it does not delete project node_modules (pnpm falls back to
-      re-fetching), but every project loses the fast hard-link reuse and
-      will re-download packages on next install.
+  migration_method: app-config
+  migration_config_hint: "pnpm config set store-dir <new-path>."
+  cleanup_risk: medium
+  cleanup_consequence: >
+    Deleting it does not delete project node_modules (pnpm falls back to
+    re-fetching), but every project loses the fast hard-link reuse and
+    will re-download packages on next install.
 
 - id: yarn-cache
   application: Yarn
   category: package-manager-cache
-  match:
-    path_patterns:
-      - "%LOCALAPPDATA%\\Yarn\\Cache\\*"
-      - "%USERPROFILE%\\.cache\\yarn\\*"
+  path_patterns:
+    - "%LOCALAPPDATA%\\Yarn\\Cache\\*"
+    - "%USERPROFILE%\\.cache\\yarn\\*"
   confidence: 0.85
   owner: user
   purpose: Yarn's downloaded package cache.
   deletable: true
   migratable: true
-  migration:
-    method: app-config
-    config_hint: "`yarn config set cache-folder <new-path>`."
-  cleanup:
-    risk: medium
-    consequence: Re-downloaded on next install.
+  migration_method: app-config
+  migration_config_hint: "yarn config set cache-folder <new-path>."
+  cleanup_risk: medium
+  cleanup_consequence: Re-downloaded on next install.
 
 - id: pip-cache
   application: pip
   category: package-manager-cache
-  match:
-    path_patterns:
-      - "%LOCALAPPDATA%\\pip\\Cache\\*"
+  path_patterns:
+    - "%LOCALAPPDATA%\\pip\\Cache\\*"
   confidence: 0.9
   owner: user
   purpose: pip's downloaded wheel/sdist cache.
   deletable: true
   migratable: true
-  migration:
-    method: app-config
-    config_hint: "Set the PIP_CACHE_DIR environment variable."
-  cleanup:
-    risk: medium
-    consequence: Re-downloaded on next `pip install`.
+  migration_method: app-config
+  migration_config_hint: "Set the PIP_CACHE_DIR environment variable."
+  cleanup_risk: medium
+  cleanup_consequence: Re-downloaded on next `pip install`.
 
 - id: uv-cache
   application: uv
   category: package-manager-cache
-  match:
-    path_patterns:
-      - "%LOCALAPPDATA%\\uv\\cache\\*"
-      - "%APPDATA%\\uv\\cache\\*"
+  path_patterns:
+    - "%LOCALAPPDATA%\\uv\\cache\\*"
+    - "%APPDATA%\\uv\\cache\\*"
   confidence: 0.9
   owner: user
   purpose: uv's downloaded package cache and prebuilt wheel cache.
   deletable: true
   migratable: true
-  migration:
-    method: app-config
-    config_hint: "Set the UV_CACHE_DIR environment variable."
-  cleanup:
-    risk: medium
-    consequence: Re-downloaded on next `uv sync`/`uv pip install`.
+  migration_method: app-config
+  migration_config_hint: "Set the UV_CACHE_DIR environment variable."
+  cleanup_risk: medium
+  cleanup_consequence: Re-downloaded on next `uv sync`/`uv pip install`.
 
 - id: conda-pkgs-cache
   application: Conda
   category: package-manager-cache
-  match:
-    path_patterns:
-      - "%USERPROFILE%\\.conda\\pkgs\\*"
-      - "%USERPROFILE%\\Anaconda3\\pkgs\\*"
-      - "%USERPROFILE%\\Miniconda3\\pkgs\\*"
+  path_patterns:
+    - "%USERPROFILE%\\.conda\\pkgs\\*"
+    - "%USERPROFILE%\\Anaconda3\\pkgs\\*"
+    - "%USERPROFILE%\\Miniconda3\\pkgs\\*"
   confidence: 0.85
   owner: user
   purpose: Conda's shared, hard-linked package cache used across environments.
   deletable: true
   migratable: false
-  cleanup:
-    risk: medium
-    consequence: >
-      `conda clean --packages` is the sanctioned way to prune this; a raw
-      delete can break existing environments that hard-link into it.
+  cleanup_risk: medium
+  cleanup_consequence: >
+    `conda clean --packages` is the sanctioned way to prune this; a raw
+    delete can break existing environments that hard-link into it.
   notes: Prefer recommending `conda clean -a` over a raw directory delete.
 
 # ---- Dev environments / IDEs --------------------------------------------
@@ -125,10 +110,9 @@
 - id: docker-desktop-wsl-data
   application: Docker Desktop
   category: container-runtime
-  match:
-    path_patterns:
-      - "%LOCALAPPDATA%\\Docker\\wsl\\data\\*.vhdx"
-      - "%LOCALAPPDATA%\\Docker\\wsl\\distro\\*.vhdx"
+  path_patterns:
+    - "%LOCALAPPDATA%\\Docker\\wsl\\data\\*.vhdx"
+    - "%LOCALAPPDATA%\\Docker\\wsl\\distro\\*.vhdx"
   confidence: 0.95
   owner: user
   purpose: >
@@ -136,189 +120,170 @@
     and the build cache.
   deletable: false
   migratable: true
-  migration:
-    method: manual
-    config_hint: >
-      Docker Desktop Settings → Resources → Advanced → "Disk image location",
-      or `wsl --export`/`wsl --unregister`/`wsl --import` to relocate the
-      distro's VHDX manually. Never move the .vhdx file while Docker/WSL is
-      running.
-    requires_app_closed: true
-  cleanup:
-    risk: high
-    consequence: >
-      Contains every local image, container, and volume; deleting it
-      removes all of them. `docker system prune` (from inside Docker) is
-      the safe way to reclaim unused-layer space without full deletion.
+  migration_method: manual
+  migration_config_hint: >
+    Docker Desktop Settings -> Resources -> Advanced -> "Disk image location",
+    or `wsl --export`/`wsl --unregister`/`wsl --import` to relocate the
+    distro's VHDX manually. Never move the .vhdx file while Docker/WSL is
+    running.
+  migration_requires_app_closed: true
+  cleanup_risk: high
+  cleanup_consequence: >
+    Contains every local image, container, and volume; deleting it removes
+    all of them. `docker system prune` (from inside Docker) is the safe
+    way to reclaim unused-layer space without full deletion.
   notes: This file only shrinks on its own rarely — prefer `docker system prune -a` for reclaiming space before considering migration/deletion.
 
 - id: wsl-distro-vhdx
   application: WSL
   category: vm-disk
-  match:
-    path_patterns:
-      - "%LOCALAPPDATA%\\Packages\\*.WSL*\\LocalState\\*.vhdx"
-      - "%USERPROFILE%\\AppData\\Local\\wsl\\*\\ext4.vhdx"
+  path_patterns:
+    - "%LOCALAPPDATA%\\Packages\\*.WSL*\\LocalState\\*.vhdx"
+    - "%USERPROFILE%\\AppData\\Local\\wsl\\*\\ext4.vhdx"
   confidence: 0.85
   owner: user
   purpose: A WSL distribution's virtual disk (its entire Linux filesystem).
   deletable: false
   migratable: true
-  migration:
-    method: manual
-    config_hint: >
-      `wsl --export <Distro> backup.tar`, `wsl --unregister <Distro>`,
-      `wsl --import <Distro> <NewInstallLocation> backup.tar` to relocate.
-      Never copy the .vhdx file directly while it is mounted.
-    requires_app_closed: true
-  cleanup:
-    risk: critical
-    consequence: Deleting it destroys the entire Linux distro's filesystem and everything installed inside it.
+  migration_method: manual
+  migration_config_hint: >
+    `wsl --export <Distro> backup.tar`, `wsl --unregister <Distro>`,
+    `wsl --import <Distro> <NewInstallLocation> backup.tar` to relocate.
+    Never copy the .vhdx file directly while it is mounted.
+  migration_requires_app_closed: true
+  cleanup_risk: critical
+  cleanup_consequence: Deleting it destroys the entire Linux distro's filesystem and everything installed inside it.
 
-- id: vscode-cachedextensionvsixs-workspacestorage
+- id: vscode-caches-workspacestorage
   application: Visual Studio Code
   category: ide-cache
-  match:
-    path_patterns:
-      - "%APPDATA%\\Code\\CachedData\\*"
-      - "%APPDATA%\\Code\\Cache\\*"
-      - "%APPDATA%\\Code\\CachedExtensionVSIXs\\*"
-      - "%APPDATA%\\Code\\User\\workspaceStorage\\*"
+  path_patterns:
+    - "%APPDATA%\\Code\\CachedData\\*"
+    - "%APPDATA%\\Code\\Cache\\*"
+    - "%APPDATA%\\Code\\CachedExtensionVSIXs\\*"
+    - "%APPDATA%\\Code\\User\\workspaceStorage\\*"
   confidence: 0.85
   owner: user
-  purpose: VS Code's internal render/GPU cache, extension download cache, and per-workspace state (search history, some extension local storage).
+  purpose: >
+    VS Code's internal render/GPU cache, extension download cache, and
+    per-workspace state (search history, some extension local storage).
   deletable: true
   migratable: false
-  cleanup:
-    risk: low
-    consequence: Rebuilt automatically; at most a slightly slower next startup or loss of some per-workspace UI state (not source code).
+  cleanup_risk: low
+  cleanup_consequence: >
+    Rebuilt automatically; at most a slightly slower next startup or loss
+    of some per-workspace UI state (not source code).
 
 - id: jetbrains-caches
   application: JetBrains IDEs
   category: ide-cache
-  match:
-    path_patterns:
-      - "%LOCALAPPDATA%\\JetBrains\\*\\caches\\*"
-      - "%USERPROFILE%\\.cache\\JetBrains\\*"
+  path_patterns:
+    - "%LOCALAPPDATA%\\JetBrains\\*\\caches\\*"
+    - "%USERPROFILE%\\.cache\\JetBrains\\*"
   confidence: 0.85
   owner: user
   purpose: Per-IDE indexing caches (symbol index, compiled shared indexes) for IntelliJ/PyCharm/Rider/etc.
   deletable: true
   migratable: false
-  cleanup:
-    risk: low
-    consequence: Rebuilt via a re-index on next project open; can make the first open of large projects noticeably slower.
+  cleanup_risk: low
+  cleanup_consequence: Rebuilt via a re-index on next project open; can make the first open of large projects noticeably slower.
 
 - id: visual-studio-componentcache
   application: Visual Studio
   category: ide-cache
-  match:
-    path_patterns:
-      - "%LOCALAPPDATA%\\Microsoft\\VisualStudio\\Packages\\_Instances\\*"
-      - "%PROGRAMDATA%\\Microsoft\\VisualStudio\\Packages\\*"
+  path_patterns:
+    - "%LOCALAPPDATA%\\Microsoft\\VisualStudio\\Packages\\_Instances\\*"
+    - "%PROGRAMDATA%\\Microsoft\\VisualStudio\\Packages\\*"
   confidence: 0.75
   owner: user
   purpose: Visual Studio Installer's downloaded component/workload packages, kept for repair/modify/uninstall without re-downloading.
   deletable: true
   migratable: false
-  cleanup:
-    risk: medium
-    consequence: A future "Modify" or repair of Visual Studio has to re-download the removed components.
+  cleanup_risk: medium
+  cleanup_consequence: A future "Modify" or repair of Visual Studio has to re-download the removed components.
 
 - id: git-repo-objects
   application: Git
   category: dev-tool-data
-  match:
-    path_patterns:
-      - "*\\.git\\objects\\*"
-      - "*\\.git\\lfs\\*"
+  path_patterns:
+    - "*\\.git\\objects\\*"
+    - "*\\.git\\lfs\\*"
   confidence: 0.7
   owner: user
   purpose: A Git repository's object database (all commit history) or Git LFS object cache.
   deletable: false
   migratable: false
-  cleanup:
-    risk: high
-    consequence: >
-      This is version-controlled project history, not a cache — deleting
-      it can destroy unpushed commits/branches. `git gc` / `git lfs prune`
-      are the correct, safe tools to shrink it; StorOps only ever
-      recommends running those, never deletes inside .git itself.
+  cleanup_risk: high
+  cleanup_consequence: >
+    This is version-controlled project history, not a cache — deleting it
+    can destroy unpushed commits/branches. `git gc` / `git lfs prune` are
+    the correct, safe tools to shrink it; StorOps only ever recommends
+    running those, never deletes inside .git itself.
 
 # ---- General consumer applications --------------------------------------
 
 - id: steam-library
   application: Steam
   category: application-data
-  match:
-    path_patterns:
-      - "*\\Steam\\steamapps\\common\\*"
-      - "*\\Steam\\steamapps\\workshop\\*"
+  path_patterns:
+    - "*\\Steam\\steamapps\\common\\*"
+    - "*\\Steam\\steamapps\\workshop\\*"
   confidence: 0.9
   owner: user
   purpose: Installed game files and Workshop content managed by Steam.
   deletable: false
   migratable: true
-  migration:
-    method: app-config
-    config_hint: >
-      Steam → Settings → Storage → add a new Steam Library Folder on the
-      target drive, then right-click each game → Properties → Local Files
-      → Move Install Folder. Do not move these folders manually.
-    requires_app_closed: false
-  cleanup:
-    risk: high
-    consequence: Games require a full re-download/re-install if deleted; use Steam's uninstall, not manual deletion.
+  migration_method: app-config
+  migration_config_hint: >
+    Steam -> Settings -> Storage -> add a new Steam Library Folder on the
+    target drive, then right-click each game -> Properties -> Local Files
+    -> Move Install Folder. Do not move these folders manually.
+  migration_requires_app_closed: false
+  cleanup_risk: high
+  cleanup_consequence: Games require a full re-download/re-install if deleted; use Steam's uninstall, not manual deletion.
 
 - id: browser-cache-generic
   application: Web Browser (Chrome/Edge)
   category: browser-cache
-  match:
-    path_patterns:
-      - "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Cache\\*"
-      - "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Cache\\*"
+  path_patterns:
+    - "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Cache\\*"
+    - "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Cache\\*"
   confidence: 0.9
   owner: user
   purpose: HTTP cache of previously visited page assets.
   deletable: true
   migratable: false
-  cleanup:
-    risk: low
-    consequence: Pages simply reload assets from the network on next visit; no login/bookmark/history loss.
-  notes: Do not confuse with the sibling "User Data\\Default" profile folder (bookmarks/passwords/history) — that is not a cache and is not covered by this rule.
+  cleanup_risk: low
+  cleanup_consequence: Pages simply reload assets from the network on next visit; no login/bookmark/history loss.
+  notes: Do not confuse with the sibling "User Data\Default" profile folder (bookmarks/passwords/history) — that is not a cache and is not covered by this rule.
 
 - id: discord-cache
   application: Discord
   category: application-cache
-  match:
-    path_patterns:
-      - "%APPDATA%\\discord\\Cache\\*"
-      - "%APPDATA%\\discord\\Code Cache\\*"
-      - "%APPDATA%\\discord\\GPUCache\\*"
+  path_patterns:
+    - "%APPDATA%\\discord\\Cache\\*"
+    - "%APPDATA%\\discord\\Code Cache\\*"
+    - "%APPDATA%\\discord\\GPUCache\\*"
   confidence: 0.9
   owner: user
   purpose: Discord's Electron/Chromium cache (images, emoji, GPU shader cache).
   deletable: true
   migratable: false
-  cleanup:
-    risk: low
-    consequence: Rebuilt automatically; no message/account data loss.
+  cleanup_risk: low
+  cleanup_consequence: Rebuilt automatically; no message/account data loss.
 
 - id: adobe-media-cache
   application: Adobe (Creative Cloud apps)
   category: application-cache
-  match:
-    path_patterns:
-      - "%APPDATA%\\Adobe\\Common\\Media Cache Files\\*"
-      - "%APPDATA%\\Adobe\\Common\\Media Cache\\*"
+  path_patterns:
+    - "%APPDATA%\\Adobe\\Common\\Media Cache Files\\*"
+    - "%APPDATA%\\Adobe\\Common\\Media Cache\\*"
   confidence: 0.8
   owner: user
   purpose: Premiere Pro/After Effects media cache files (conformed audio, peak files) that speed up scrubbing/playback.
   deletable: true
   migratable: true
-  migration:
-    method: app-config
-    config_hint: Preferences → Media Cache → change the Media Cache Files database/location.
-  cleanup:
-    risk: medium
-    consequence: Regenerated automatically on next project open, but re-conforming media for large projects can take real time.
+  migration_method: app-config
+  migration_config_hint: Preferences -> Media Cache -> change the Media Cache Files database/location.
+  cleanup_risk: medium
+  cleanup_consequence: Regenerated automatically on next project open, but re-conforming media for large projects can take real time.

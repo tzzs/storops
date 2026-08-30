@@ -15,38 +15,53 @@ path is from its name alone (see [`docs/DESIGN.md`](../docs/DESIGN.md) §3.3).
 
 ## Rule schema
 
-Each file is a YAML list of rule entries:
+Each file is a YAML list of **flat** rule entries — deliberately shallow (one
+list field, everything else a scalar) so `Identify.psm1`'s small, purpose-built
+YAML-subset reader can parse it without pulling in an external YAML module:
 
 ```yaml
 - id: lmstudio-models                  # stable, unique, kebab-case
   application: LM Studio               # human-readable owner name
   category: ai-model-cache             # see "Categories" below
-  match:
-    path_patterns:                     # PowerShell -like patterns, matched
-      - "%USERPROFILE%\\.lmstudio\\models\\*"   # against the full normalized
-      - "%USERPROFILE%\\.cache\\lm-studio\\*"   # path (case-insensitive)
+  path_patterns:                       # PowerShell -like patterns, matched
+    - "%USERPROFILE%\\.lmstudio\\models\\*"   # against the full normalized
+    - "%USERPROFILE%\\.cache\\lm-studio\\*"   # path (case-insensitive)
   confidence: 0.95                     # 0.0-1.0, how sure this ID is
   owner: user                          # user | system | shared
   purpose: >
     One or two sentences: what this is and why it exists on disk.
   deletable: false                     # can StorOps ever offer to delete it?
   migratable: true                     # can it be relocated?
-  migration:
-    method: app-config                 # app-config | junction | manual | none
-    config_hint: >
-      Where/how to repoint the app (setting name, env var, config file).
-    requires_app_closed: true
-  cleanup:
-    risk: high                         # low | medium | high | critical
-    consequence: >
-      What the user loses/must redo if this is deleted.
+  migration_method: app-config         # app-config | junction | manual | none
+  migration_config_hint: >
+    Where/how to repoint the app (setting name, env var, config file).
+  migration_requires_app_closed: true
+  cleanup_risk: high                   # low | medium | high | critical
+  cleanup_consequence: >
+    What the user loses/must redo if this is deleted.
   notes: >
     Optional free-text guidance for the agent (edge cases, caveats).
 ```
 
-Only `id`, `application`, `category`, `match`, and `cleanup.risk` are required;
-everything else has safe defaults (`confidence: 0.5`, `deletable: false`,
-`migratable: false`, `owner: user`).
+Only `id`, `application`, `category`, `path_patterns`, and `cleanup_risk` are
+required; everything else has safe defaults (`confidence: 0.5`,
+`deletable: false`, `migratable: false`, `owner: user`).
+
+### YAML subset supported
+
+`Identify.psm1`'s reader is **not** a general-purpose YAML parser — it only
+understands what these rule files actually use:
+
+- a top-level block sequence (`- id: ...`) of flat mappings
+- scalar values: quoted strings, bare strings, `true`/`false`, numbers
+- one nested block sequence per item: `path_patterns:` followed by `  - "..."` lines
+- folded block scalars (`field: >` followed by more-indented lines, joined
+  with spaces) for long text like `purpose`/`notes`/`*_consequence`/`*_config_hint`
+- `#` line comments
+
+It does **not** support flow style (`{ }` / `[ ]`), multi-document files,
+anchors/aliases, or literal block scalars (`|`). Keep new rules within this
+subset.
 
 ### Path pattern variables
 
