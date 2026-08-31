@@ -8,10 +8,17 @@ path is from its name alone (see [`docs/DESIGN.md`](../docs/DESIGN.md) §3.3).
 
 | File | Covers |
 |---|---|
-| `ai-models.yaml` | AI/ML model weights and inference-tool caches (LM Studio, Ollama, Hugging Face, ComfyUI/Stable Diffusion, PyTorch/CUDA) |
-| `applications.yaml` | Dev tooling (npm, pnpm, pip, uv, conda, Git, VS Code, JetBrains, Visual Studio, Docker, WSL) and general consumer apps (Steam, Chrome, Edge, Discord, Adobe) |
-| `caches.yaml` | Generic OS/browser/temp caches not owned by one specific application above |
-| `windows.yaml` | System paths StorOps must never classify as safe to touch |
+| `ai-models.yaml` | AI/ML model weights and inference-tool caches (LM Studio, Ollama, Hugging Face, ComfyUI/Stable Diffusion, PyTorch/CUDA) -- `path_patterns` are currently Windows-token-only |
+| `applications.yaml` | Dev tooling (npm, pnpm, pip, uv, conda, Git, VS Code, JetBrains, Visual Studio, Docker, WSL) and general consumer apps (Steam, Chrome, Edge, Discord, Adobe) -- `path_patterns` are currently Windows-token-only |
+| `caches.yaml` | Generic OS/browser/temp caches not owned by one specific application above -- `path_patterns` are currently Windows-token-only |
+| `windows.yaml` | Windows system paths StorOps must never classify as safe to touch |
+| `linux.yaml` | Linux system paths StorOps must never classify as safe to touch |
+| `macos.yaml` | macOS system paths StorOps must never classify as safe to touch |
+
+Extending `ai-models.yaml`/`applications.yaml`/`caches.yaml` with Linux/macOS
+`path_patterns` for the same applications (e.g. LM Studio under
+`%XDG_CACHE_HOME%` or `%CACHES%` instead of only `%LOCALAPPDATA%`) is
+tracked follow-up work, not yet done -- see docs/DESIGN.md §4c.
 
 ## Rule schema
 
@@ -66,9 +73,20 @@ subset.
 ### Path pattern variables
 
 Patterns may use these tokens, expanded from the current environment at match
-time (case-insensitive): `%USERPROFILE%`, `%LOCALAPPDATA%`, `%APPDATA%`,
-`%PROGRAMDATA%`, `%PROGRAMFILES%`, `%PROGRAMFILES(X86)%`, `%TEMP%`,
-`%SYSTEMROOT%`. Patterns use PowerShell `-like` wildcards (`*`, `?`).
+time by `Identify.psm1`'s `Expand-StorOpsPatternTokens` (case-sensitive as
+written; see docs/DESIGN.md §4c). Only the set matching the *current*
+platform actually expands -- a token from another platform's set is left
+literal and simply never matches a real path, which is why `windows.yaml`/
+`linux.yaml`/`macos.yaml` are all loaded unconditionally regardless of which
+platform StorOps is running on.
+
+| Platform | Tokens |
+|---|---|
+| Windows | `%USERPROFILE%`, `%LOCALAPPDATA%`, `%APPDATA%`, `%PROGRAMDATA%`, `%PROGRAMFILES%`, `%PROGRAMFILES(X86)%`, `%TEMP%`, `%SYSTEMROOT%` |
+| Linux | `%HOME%`, `%XDG_CACHE_HOME%`, `%XDG_CONFIG_HOME%`, `%XDG_DATA_HOME%`, `%TMPDIR%` |
+| macOS | `%HOME%`, `%CACHES%` (`~/Library/Caches`), `%APP_SUPPORT%` (`~/Library/Application Support`), `%XDG_CACHE_HOME%`, `%TMPDIR%` |
+
+Patterns use PowerShell `-like` wildcards (`*`, `?`).
 
 ### Categories (used for grouping/summaries)
 
@@ -87,10 +105,10 @@ never offers these for automatic deletion, full stop).
 
 ### Matching precedence
 
-`Identify.psm1` evaluates `windows.yaml` first (a `critical` system match wins
-outright and short-circuits further matching), then `ai-models.yaml`, then
-`applications.yaml`, then `caches.yaml`. Within a file, first matching rule
-wins; more specific patterns should be listed before broader ones. A path
-matching nothing is reported as `category: unknown`, `confidence: 0`,
-`deletable: false` — StorOps never invents a classification for the unknown
-case.
+`Identify.psm1` evaluates `windows.yaml`, `linux.yaml`, `macos.yaml` first (a
+`critical` system match wins outright and short-circuits further matching),
+then `ai-models.yaml`, then `applications.yaml`, then `caches.yaml`. Within a
+file, first matching rule wins; more specific patterns should be listed
+before broader ones. A path matching nothing is reported as `category:
+unknown`, `confidence: 0`, `deletable: false` — StorOps never invents a
+classification for the unknown case.

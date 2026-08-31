@@ -17,7 +17,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [string]$Path = 'C:\',
+    [string]$Path = $(if ($env:OS -eq 'Windows_NT') { 'C:\' } else { '/' }),
 
     # How many of the largest immediate entries to report.
     [int]$Top = 15,
@@ -25,8 +25,9 @@ param(
     # Also list top-level loose files directly under Path, not just folders.
     [switch]$IncludeFiles,
 
-    # Ask WizTree to read the NTFS MFT directly (faster/more complete, but
-    # self-elevates via UAC).
+    # Windows only: ask WizTree to read the NTFS MFT directly (faster/more
+    # complete, but self-elevates via UAC). No effect on Linux/macOS -- see
+    # docs/DESIGN.md §4a; StorOps never self-elevates there.
     [switch]$Admin,
 
     # Emit structured JSON instead of a formatted table.
@@ -36,15 +37,15 @@ param(
 $ErrorActionPreference = 'Stop'
 $libRoot = Join-Path $PSScriptRoot 'lib'
 Import-Module (Join-Path $libRoot 'Common.psm1') -Force
-Import-Module (Join-Path $libRoot 'WizTree.psm1') -Force
+Import-Module (Join-Path $libRoot 'ScanBackend.psm1') -Force
 Import-Module (Join-Path $libRoot 'Identify.psm1') -Force
 Import-Module (Join-Path $libRoot 'Risk.psm1') -Force
 
 $normalized = Resolve-StorOpsPath -Path $Path
 
 $capacity = $null
-try { $capacity = Get-StorOpsFreeSpaceInfo -DriveLetter $normalized.Substring(0, 1) }
-catch { Write-Warning "Could not read drive capacity for '$normalized': $_" }
+try { $capacity = Get-StorOpsFreeSpaceInfo -Path $normalized }
+catch { Write-Warning "Could not read drive/filesystem capacity for '$normalized': $_" }
 
 Write-Verbose "StorOps: scanning '$normalized' (top $Top, depth 1, includeFiles=$($IncludeFiles.IsPresent))"
 $entries = Get-StorOpsTopEntries -Path $normalized -Top $Top -MaxDepth 1 -Admin:$Admin -IncludeFiles:$IncludeFiles
@@ -64,9 +65,11 @@ $rows = foreach ($entry in $entries) {
 
 if ($Json) {
     [PSCustomObject]@{
-        ScannedPath = $normalized
-        Drive       = $capacity
-        Entries     = $rows
+        ScannedPath   = $normalized
+        Drive         = $capacity
+        Entries       = $rows
+        Backend       = Get-StorOpsScanBackendName
+        BackendAdvice = Get-StorOpsScanBackendAdvice
     } | ConvertTo-Json -Depth 6
     return
 }

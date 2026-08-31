@@ -1,23 +1,51 @@
 #requires -Version 5.1
 <#
-    StorOps shared helpers: path normalization, byte formatting, the
-    per-user working directory (temp CSVs, generated plans), and small
-    environment probes used by every other module/script.
+    StorOps shared helpers: platform detection, path normalization, byte
+    formatting, the per-user working directory (temp exports, generated
+    plans), and small environment probes used by every other module/script.
 #>
 
 Set-StrictMode -Version Latest
 
-function Get-StorOpsWorkDir {
+function Get-StorOpsPlatform {
     <#
-        Per-user scratch directory for temporary WizTree CSV exports and
-        generated plan files. Never used to store anything StorOps itself
-        needs to survive across runs except plan files the user explicitly
-        keeps around to hand to *-execute.ps1.
+        'Windows' | 'Linux' | 'MacOS'. $IsWindows/$IsLinux/$IsMacOS are only
+        defined as automatic variables on PowerShell 6+ -- Windows
+        PowerShell 5.1 (which this module still supports, per #requires)
+        never runs anywhere but Windows, so their absence itself means
+        Windows. Reading them via Get-Variable -ErrorAction SilentlyContinue
+        avoids a Set-StrictMode failure on 5.1, where referencing an
+        undefined variable directly ($IsLinux) throws.
     #>
     [CmdletBinding()]
     param()
 
-    $dir = Join-Path $env:LOCALAPPDATA 'StorOps'
+    $isLinuxVar = Get-Variable -Name IsLinux -Scope Global -ErrorAction SilentlyContinue
+    if ($isLinuxVar -and $isLinuxVar.Value) { return 'Linux' }
+    $isMacVar = Get-Variable -Name IsMacOS -Scope Global -ErrorAction SilentlyContinue
+    if ($isMacVar -and $isMacVar.Value) { return 'MacOS' }
+    return 'Windows'
+}
+
+function Get-StorOpsWorkDir {
+    <#
+        Per-user scratch directory for temporary scan exports and generated
+        plan files. Never used to store anything StorOps itself needs to
+        survive across runs except plan files the user explicitly keeps
+        around to hand to *-execute.ps1.
+    #>
+    [CmdletBinding()]
+    param()
+
+    switch (Get-StorOpsPlatform) {
+        'Windows' { $dir = Join-Path $env:LOCALAPPDATA 'StorOps' }
+        'MacOS'   { $dir = Join-Path $HOME 'Library/Application Support/StorOps' }
+        default {
+            $xdgData = if ($env:XDG_DATA_HOME) { $env:XDG_DATA_HOME } else { Join-Path $HOME '.local/share' }
+            $dir = Join-Path $xdgData 'storops'
+        }
+    }
+
     if (-not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
@@ -42,9 +70,10 @@ function New-StorOpsTempFile {
 function Resolve-StorOpsPath {
     <#
         Normalize a user-supplied path to a full path with a trailing
-        backslash trimmed (except for a bare drive root, e.g. "C:\"),
-        without requiring the path to exist. Used so rule matching and
-        display are consistent regardless of how the caller typed a path.
+        separator trimmed (except for a bare volume root -- "C:\" on
+        Windows, "/" on Linux/macOS), without requiring the path to exist.
+        Used so rule matching and display are consistent regardless of how
+        the caller typed a path, on any platform.
     #>
     [CmdletBinding()]
     param(
@@ -53,8 +82,10 @@ function Resolve-StorOpsPath {
     )
 
     $full = [System.IO.Path]::GetFullPath($Path)
-    if ($full.Length -gt 3 -and $full.EndsWith('\')) {
-        $full = $full.TrimEnd('\')
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $root = [System.IO.Path]::GetPathRoot($full)
+    if ($full.Length -gt $root.Length -and $full.EndsWith($sep)) {
+        $full = $full.TrimEnd($sep)
     }
     return $full
 }
@@ -85,10 +116,21 @@ function Format-StorOpsSize {
 }
 
 function Test-StorOpsIsAdmin {
+    <#
+        Windows: local Administrator check (unchanged). Linux/macOS: root
+        check via `id -u` -- root is enough to bypass most Permission Denied
+        noise during a scan, but StorOps never requires it and never
+        self-elevates (unlike WizTree's /admin=1, gdu/du need no elevation
+        to be useful for the vast majority of a user's own home directory).
+    #>
     [CmdletBinding()]
     param()
 
-    if ($IsLinux -or $IsMacOS) { return $false }
+    if ((Get-StorOpsPlatform) -ne 'Windows') {
+        $uid = & id -u 2>$null
+        return ($uid -eq '0')
+    }
+
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
     return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -96,33 +138,57 @@ function Test-StorOpsIsAdmin {
 
 function Get-StorOpsFreeSpaceInfo {
     <#
-        Total/used/free capacity for a drive letter, via CIM rather than
-        WizTree — StorOps does not depend on WizTree for basic drive
-        capacity, only for the directory/file breakdown.
+        Total/used/free capacity for the volume/filesystem containing $Path.
+        On Windows this takes a drive letter (e.g. "C" or "C:\", the -Path
+        parameter keeps the old -DriveLetter name as an alias) and uses CIM,
+        matching the original behavior. On Linux/macOS it takes any path and
+        shells out to `df` for the filesystem that path lives on -- StorOps
+        does not depend on a scan backend for basic capacity info.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [string]$DriveLetter
+        [Alias('DriveLetter')]
+        [string]$Path
     )
 
-    $letter = $DriveLetter.TrimEnd(':', '\')
-    $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='$letter`:'" -ErrorAction Stop
-    if (-not $disk) {
-        throw "StorOps: drive '$DriveLetter' was not found."
+    if ((Get-StorOpsPlatform) -eq 'Windows') {
+        $letter = $Path.Substring(0, 1)
+        $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='$letter`:'" -ErrorAction Stop
+        if (-not $disk) {
+            throw "StorOps: drive '$Path' was not found."
+        }
+        return [PSCustomObject]@{
+            Drive      = "$letter`:"
+            TotalBytes = [int64]$disk.Size
+            FreeBytes  = [int64]$disk.FreeSpace
+            UsedBytes  = [int64]($disk.Size - $disk.FreeSpace)
+            VolumeName = $disk.VolumeName
+            FileSystem = $disk.FileSystem
+        }
     }
 
-    [PSCustomObject]@{
-        Drive        = "$letter`:"
-        TotalBytes   = [int64]$disk.Size
-        FreeBytes    = [int64]$disk.FreeSpace
-        UsedBytes    = [int64]($disk.Size - $disk.FreeSpace)
-        VolumeName   = $disk.VolumeName
-        FileSystem   = $disk.FileSystem
+    # `df -Pk -- <path>`: -P forces single-line POSIX output (GNU df can
+    # otherwise wrap a long device/source column across two lines), -k
+    # reports 1024-byte blocks so parsing is stable across GNU and BSD/macOS
+    # df without needing to detect which flavor is installed.
+    $lines = @(& df -Pk -- $Path 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $lines.Count -lt 2) {
+        throw "StorOps: could not read filesystem capacity for '$Path' via df."
+    }
+    $fields = @($lines[1] -split '\s+')
+    return [PSCustomObject]@{
+        Drive      = $fields[0]
+        TotalBytes = [int64]$fields[1] * 1024
+        FreeBytes  = [int64]$fields[3] * 1024
+        UsedBytes  = [int64]$fields[2] * 1024
+        VolumeName = $fields[0]
+        FileSystem = $null
     }
 }
 
 Export-ModuleMember -Function @(
+    'Get-StorOpsPlatform',
     'Get-StorOpsWorkDir',
     'New-StorOpsTempFile',
     'Resolve-StorOpsPath',

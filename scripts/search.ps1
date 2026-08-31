@@ -14,17 +14,20 @@
 .NOTES
     Read-tier capability: safe to run without confirmation.
 
-    NamePattern is passed straight to WizTree's own /filter, so the CSV
-    WizTree exports is already narrowed at the source. -MinSizeGB and
-    -OlderThanDays have no WizTree CLI equivalent and are applied after
-    the export, so an unscoped, unfiltered whole-drive search (no
-    NamePattern) can still mean a large export -- scope -Path narrower
-    when you can.
+    NamePattern is passed to the active scan backend's own name filter
+    where one exists (WizTree's /filter on Windows), so its export is
+    already narrowed at the source; on Linux/macOS (Gdu/Du backends) it is
+    applied client-side after the scan instead, since gdu/du have no
+    equivalent CLI flag -- see docs/DESIGN.md §4a. -MinSizeGB and
+    -OlderThanDays have no backend-native equivalent on any platform and
+    are always applied after the scan, so an unscoped, unfiltered
+    whole-drive search (no NamePattern) can still mean a large scan --
+    scope -Path narrower when you can.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [string]$Path = 'C:\',
+    [string]$Path = $(if ($env:OS -eq 'Windows_NT') { 'C:\' } else { '/' }),
 
     # WizTree filter spec, e.g. '*.gguf' or '*cache*'. Matched against the
     # file/folder name (see /filterfullpath in WizTree's docs for the
@@ -46,7 +49,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $libRoot = Join-Path $PSScriptRoot 'lib'
 Import-Module (Join-Path $libRoot 'Common.psm1') -Force
-Import-Module (Join-Path $libRoot 'WizTree.psm1') -Force
+Import-Module (Join-Path $libRoot 'ScanBackend.psm1') -Force
 Import-Module (Join-Path $libRoot 'Identify.psm1') -Force
 
 $normalized = Resolve-StorOpsPath -Path $Path
@@ -62,54 +65,49 @@ $exportFiles = $true
 $exportFolders = [bool]$Folders
 
 Write-Verbose "StorOps: searching '$normalized' (pattern='$NamePattern', minSizeGB=$MinSizeGB, olderThanDays=$OlderThanDays)"
-$csv = Invoke-WizTreeScan -Path $normalized -ExportFolders $exportFolders -ExportFiles $exportFiles `
-    -MaxDepth $MaxDepth -SortBy 1 -Filter $NamePattern -Admin:$Admin
+$all = Invoke-StorOpsScan -Path $normalized -ExportFolders $exportFolders -ExportFiles $exportFiles `
+    -MaxDepth $MaxDepth -Filter $NamePattern -Admin:$Admin
 
-try {
-    $all = ConvertFrom-WizTreeCsv -CsvPath $csv
+$filtered = $all
+if ($MinSizeGB) {
+    $minBytes = $MinSizeGB * 1GB
+    $filtered = $filtered | Where-Object { $_.SizeBytes -ge $minBytes }
+}
+if ($OlderThanDays) {
+    $cutoff = (Get-Date).AddDays(-$OlderThanDays)
+    $filtered = $filtered | Where-Object { $_.Modified -and $_.Modified -lt $cutoff }
+}
 
-    $filtered = $all
-    if ($MinSizeGB) {
-        $minBytes = $MinSizeGB * 1GB
-        $filtered = $filtered | Where-Object { $_.SizeBytes -ge $minBytes }
-    }
-    if ($OlderThanDays) {
-        $cutoff = (Get-Date).AddDays(-$OlderThanDays)
-        $filtered = $filtered | Where-Object { $_.Modified -and $_.Modified -lt $cutoff }
-    }
+$top = $filtered | Sort-Object -Property SizeBytes -Descending | Select-Object -First $Top
 
-    $top = $filtered | Sort-Object -Property SizeBytes -Descending | Select-Object -First $Top
-
-    $rows = foreach ($entry in $top) {
-        $identity = Get-StorOpsPathIdentity -Path $entry.FullName
-        [PSCustomObject]@{
-            Path        = $entry.FullName
-            IsFolder    = $entry.IsFolder
-            SizeBytes   = $entry.SizeBytes
-            Modified    = $entry.Modified
-            Application = $identity.Application
-            Category    = $identity.Category
-        }
-    }
-
-    if ($Json) {
-        [PSCustomObject]@{
-            SearchedPath  = $normalized
-            NamePattern   = $NamePattern
-            MatchCount    = $filtered.Count
-            ReturnedCount = $rows.Count
-            Entries       = $rows
-        } | ConvertTo-Json -Depth 6
-        return
-    }
-
-    Write-Host "Found $($filtered.Count) match(es) under ${normalized} (showing top $($rows.Count)):" -ForegroundColor Cyan
-    foreach ($row in $rows) {
-        $label = if ($row.Application) { $row.Application } else { '(unidentified)' }
-        $modLabel = if ($row.Modified) { $row.Modified.ToString('yyyy-MM-dd') } else { '?' }
-        "{0,10}  {1,-10} {2,-18}{3}" -f (Format-StorOpsSize $row.SizeBytes), $modLabel, $label, $row.Path | Write-Host
+$rows = foreach ($entry in $top) {
+    $identity = Get-StorOpsPathIdentity -Path $entry.FullName
+    [PSCustomObject]@{
+        Path        = $entry.FullName
+        IsFolder    = $entry.IsFolder
+        SizeBytes   = $entry.SizeBytes
+        Modified    = $entry.Modified
+        Application = $identity.Application
+        Category    = $identity.Category
     }
 }
-finally {
-    Remove-Item -LiteralPath $csv -Force -ErrorAction SilentlyContinue
+
+if ($Json) {
+    [PSCustomObject]@{
+        SearchedPath  = $normalized
+        NamePattern   = $NamePattern
+        MatchCount    = $filtered.Count
+        ReturnedCount = $rows.Count
+        Entries       = $rows
+        Backend       = Get-StorOpsScanBackendName
+        BackendAdvice = Get-StorOpsScanBackendAdvice
+    } | ConvertTo-Json -Depth 6
+    return
+}
+
+Write-Host "Found $($filtered.Count) match(es) under ${normalized} (showing top $($rows.Count)):" -ForegroundColor Cyan
+foreach ($row in $rows) {
+    $label = if ($row.Application) { $row.Application } else { '(unidentified)' }
+    $modLabel = if ($row.Modified) { $row.Modified.ToString('yyyy-MM-dd') } else { '?' }
+    "{0,10}  {1,-10} {2,-18}{3}" -f (Format-StorOpsSize $row.SizeBytes), $modLabel, $label, $row.Path | Write-Host
 }

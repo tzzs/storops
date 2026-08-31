@@ -1,5 +1,7 @@
 # StorOps
 
+[![skills.sh](https://skills.sh/b/tzzs/storops)](https://skills.sh/tzzs/storops)
+
 **English** | [简体中文](README.zh-CN.md)
 
 **Storage Operations for AI Agents.**
@@ -7,7 +9,8 @@
 > See where your storage goes. Understand why. Move what matters. Clean what doesn't.
 
 StorOps is an agent skill (`storops`) that lets AI coding agents — Claude Code,
-Codex, OpenCode, etc. — safely understand and manage local storage on Windows.
+Codex, OpenCode, etc. — safely understand and manage local storage (Windows
+today; Linux/macOS support is newer — see [Status](#status) below).
 
 It is **not** another disk analyzer and **not** another disk cleaner. WizTree
 already answers "what is taking up space." StorOps answers the questions after
@@ -24,20 +27,34 @@ See [`docs/DESIGN.md`](docs/DESIGN.md) for the full product design and
 
 ## Status
 
-MVP, Windows-only. Built on top of [WizTree](https://diskanalyzer.com/) as the
-storage-discovery backend — StorOps never re-implements disk/MFT scanning, and
-never drives the WizTree GUI (no automation, screenshots, or OCR): it only
-calls `WizTree64.exe` from the command line and parses its CSV export.
+MVP. Windows is the most mature target, built on top of
+[WizTree](https://diskanalyzer.com/) as the storage-discovery backend —
+StorOps never re-implements disk/MFT scanning, and never drives the WizTree
+GUI (no automation, screenshots, or OCR): it only calls `WizTree64.exe` from
+the command line and parses its CSV export. Linux/macOS support is newer and
+uses [gdu](https://github.com/dundee/gdu) (falling back to the system `du`)
+behind the same scan-backend interface — see
+[`docs/DESIGN.md`](docs/DESIGN.md) §4a. Identification rules for AI-model/
+app/cache paths (`rules/ai-models.yaml`, `applications.yaml`, `caches.yaml`)
+are still Windows-token-only; only the critical-system-path rules
+(`rules/windows.yaml`/`linux.yaml`/`macos.yaml`) currently have per-platform
+coverage.
 
 ## Requirements
 
-- Windows with NTFS volumes.
-- [WizTree](https://diskanalyzer.com/) installed (`WizTree64.exe` on `PATH`,
-  in a standard install location, or pointed to via `$env:STOROPS_WIZTREE_PATH`).
-- PowerShell 5.1+ (Windows PowerShell) or PowerShell 7+.
-- Admin privileges are optional but recommended: WizTree's `/admin=1` mode
-  reads the NTFS MFT directly and is dramatically faster/more complete than a
-  standard scan.
+- PowerShell 5.1+ (Windows PowerShell) on Windows, or PowerShell 7+ on
+  Linux/macOS.
+- **Windows**: NTFS volumes, plus [WizTree](https://diskanalyzer.com/)
+  installed (`WizTree64.exe` on `PATH`, in a standard install location, or
+  pointed to via `$env:STOROPS_WIZTREE_PATH`). Admin privileges are optional
+  but recommended: WizTree's `/admin=1` mode reads the NTFS MFT directly and
+  is dramatically faster/more complete than a standard scan.
+- **Linux/macOS**: [gdu](https://github.com/dundee/gdu) recommended (`brew
+  install gdu` / `apt install gdu` / see its install docs) for a parallel,
+  much faster scan; StorOps falls back to the system `du` automatically if
+  `gdu` isn't found (with a one-time warning — `du` is noticeably slower on
+  large trees). Point at a specific binary via `$env:STOROPS_GDU_PATH` if
+  it's not on `PATH`. No elevation is ever required or auto-applied.
 
 ## Installation
 
@@ -107,10 +124,13 @@ git clone https://github.com/tzzs/storops.git ~/.claude/skills/storops
 ```text
 SKILL.md            agent behavior contract (when/how to use this skill)
 docs/DESIGN.md       full design brief (source of truth for intent/scope)
-rules/               declarative identification + risk rules (YAML)
+rules/               declarative identification + risk rules (YAML),
+                     per-platform critical-path files plus shared app/cache rules
 scripts/             PowerShell entry points, one per capability
-scripts/lib/         shared PowerShell modules (WizTree invocation, rule
-                     matching, risk classification, plan/verification helpers)
+scripts/lib/         shared PowerShell modules (rule matching, risk
+                     classification, plan/verification helpers)
+scripts/lib/ScanBackend.psm1   picks the platform's scan backend (docs/DESIGN.md §4a)
+scripts/lib/backends/         WizTree.psm1 (Windows), Gdu.psm1 + Du.psm1 (Linux/macOS)
 tests/               smoke tests for the rule engine and CSV parsing
 ```
 
@@ -131,7 +151,9 @@ user documents, etc.) is ever offered for automatic deletion.
 
 ## Quick start (agent-driven)
 
-An agent following `SKILL.md` will typically:
+An agent following `SKILL.md` will typically (examples below use Windows
+paths; on Linux/macOS pass POSIX paths instead, e.g. `-Path /` and
+`-Path ~/.cache` — `scan.ps1`/`search.ps1` default to `/` there automatically):
 
 ```powershell
 # 1. Read-only: see the big picture
@@ -158,6 +180,8 @@ pwsh scripts/migrate-execute.ps1 -PlanFile .\storops-migrate-plan.json -Confirm
 # 8. Read-only: re-check the migration's result at any later time
 pwsh scripts/verify.ps1 -ResultFile .\storops-migrate-result.json
 ```
+
+See [`CHANGELOG.md`](CHANGELOG.md) for a history of notable changes.
 
 ## License
 

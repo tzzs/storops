@@ -119,26 +119,76 @@ Agent 不应该看到 `C:\Users\xxx\.cache` 就凭经验猜"这应该是 Hugging
 
 ## 4. 技术定位
 
-第一阶段主要针对 **Windows**，因为 WizTree 在 Windows / NTFS 环境下具有非常优秀的扫描性能。但架构不要与 WizTree 强绑定。StorOps 应该将 WizTree 视为 **Windows storage discovery backend**，而不是整个 StorOps。
+第一阶段主要针对 **Windows**，因为 WizTree 在 Windows / NTFS 环境下具有非常优秀的扫描性能。但架构不与 WizTree 强绑定。StorOps 将 WizTree 视为 **Windows storage discovery backend**，而不是整个 StorOps。
 
-未来可以支持：
+### 4a. 跨平台 scan backend 抽象
+
+StorOps 通过 `scripts/lib/ScanBackend.psm1` 这一层调度器，把"扫一个目录、拿到它的直属子项大小"这件事和具体用什么工具做完全解耦：
 
 ```text
-Windows
- ├── WizTree
- ├── PowerShell
- └── Windows APIs
-
-Linux
- ├── du
- └── ncdu
-
-macOS
- ├── du
- └── filesystem APIs
+scripts/lib/
+  ScanBackend.psm1          调度器：探测平台 + 可用工具，选中一个 backend
+                            并原样重新导出它的三个标准函数
+  backends/
+    WizTree.psm1            Windows，基于 WizTree CLI（§5）
+    Gdu.psm1                Linux/macOS 首选，基于 gdu（见下）
+    Du.psm1                 Linux/macOS 兜底，基于系统自带 du
 ```
 
-因此核心业务逻辑不要直接散落在 WizTree 调用代码里。
+每个 backend 模块必须实现同一份契约（三个函数，签名和返回形状完全一致）：
+
+- `Invoke-StorOpsScan -Path -MaxDepth -ExportFolders -ExportFiles -Filter -FilterExclude -Admin`
+  返回一组标准化对象：`FullName, IsFolder, SizeBytes, AllocatedBytes, Modified, FileCount, FolderCount`
+  （`AllocatedBytes` 在 Linux/macOS backend 上目前等于 `SizeBytes` —— ext4/APFS 没有 NTFS MFT
+  那种统一暴露"逻辑大小 vs 实际占用块数"的简单途径，这是一个已知的、可接受的精度取舍）。
+- `Get-StorOpsTopEntries -Path -Top -MaxDepth -Admin -IncludeFiles`（scan.ps1/inspect.ps1 的直接依赖）
+- `Get-StorOpsPathSize -Path -Admin`（cleanup-plan.ps1/migrate-plan.ps1 给单个已知路径称重）
+
+调度逻辑（`Get-StorOpsScanBackendName`）：
+
+```text
+Windows            -> WizTree
+Linux/macOS + gdu   -> Gdu
+Linux/macOS 无 gdu  -> Du（打印一次性能提示，但仍然可用）
+```
+
+所有入口脚本（`scan.ps1`/`inspect.ps1`/`search.ps1`/`cleanup-plan.ps1`/`migrate-plan.ps1`）只导入
+`ScanBackend.psm1`，从不直接导入某个具体 backend —— 这样新增/更换一个平台的 backend 不需要碰任何
+入口脚本。`identify.ps1`/`Identify.psm1`/`Risk.psm1` 完全不感知 backend，只消费上面这组标准化字段。
+
+回退到 Du 时，`ScanBackend.psm1` 里的 `Write-Warning` 只有直接在终端里跑脚本的人能看到 ——
+agent 能否捕获到 PowerShell 的 warning 流并不确定。所以每个入口脚本的 `-Json` 输出（以及
+`cleanup-plan.ps1`/`migrate-plan.ps1` 落盘的 plan 文件）都额外带了 `Backend`（当前选中的
+backend 名）和 `BackendAdvice`（`Get-StorOpsScanBackendAdvice`：回退到 Du 时是一句建议装 gdu
+的文本，否则是 `null`）两个字段 —— 这是结构化数据，agent 一定读得到，不用赌 stderr 有没有被
+带回来。`SKILL.md` 第 13 条要求 agent 在 `BackendAdvice` 非空时提醒用户一次，而不是每条命令都念叨。
+
+### 4b. 为什么是 gdu，而不是直接用 du
+
+`du` 是逐文件 `stat()` 遍历，单线程，瓶颈是 I/O **延迟**而不是吞吐 —— 在 SSD/NVMe 上尤其浪费，因为
+一次只发一个 syscall，队列深度打不满。WizTree 快是因为它绕过文件系统驱动直接读 NTFS MFT，这个技巧
+在 ext4/APFS 上没有公开、稳定的等价物（ext4 可以用 `debugfs` 读裸块设备，但需要 root 且脆弱，
+StorOps 不会这么做）。
+
+能做到的、性价比最高的加速手段是**并行遍历**：[gdu](https://github.com/dundee/gdu)（Go，goroutine
+并发扫描，内置 JSON 导出，单个跨平台静态二进制）是目前最接近"WizTree 替身"的选择 —— 检测优先级为：
+
+1. `$env:STOROPS_GDU_PATH`（显式指定，呼应 `$env:STOROPS_WIZTREE_PATH` 的现有约定）
+2. PATH 上的 `gdu`
+3. 都没有 -> 回退到系统自带的 `du`（始终可用，但大目录树上明显更慢，打印一次警告提示安装 gdu）
+
+`du` 分支需要同时兼容 GNU coreutils（`--max-depth`/`-b`）和 BSD/macOS（`-d`/`-k`）两套完全不同的
+参数，`backends/Du.psm1` 在调用前探测 `du --version` 来决定用哪一套；两种情况都把深度限制原生传给
+`du` 本身（而不是先全量扫描再在 PowerShell 里截断），避免"只要顶层几个目录的大小"却触发一次全盘遍历。
+
+### 4c. 规则文件按平台拆分
+
+`rules/windows.yaml`（已有）、`rules/linux.yaml`、`rules/macos.yaml` 各自维护该平台"绝不允许自动
+清理/迁移"的关键系统路径短路规则，`Identify.psm1` 始终把三个文件都加载 —— 不匹配当前平台的 token
+（如 Linux 上出现 `%SYSTEMROOT%`）不会展开，规则自然不命中，不需要按平台条件加载。`ai-models.yaml`
+/`applications.yaml`/`caches.yaml` 目前的 `path_patterns` 仍以 Windows token 为主；补齐 Linux/macOS
+下同一批应用（LM Studio、Ollama、Docker、npm/pip 等）的路径是后续需要单独投入的工作量，不在这次
+抽象层改动范围内。
 
 ---
 
@@ -314,7 +364,12 @@ storops/ (repo root)
 │   └── DESIGN.md
 ├── scripts/
 │   ├── lib/
-│   │   ├── WizTree.psm1
+│   │   ├── ScanBackend.psm1      调度器,见 §4a
+│   │   ├── backends/
+│   │   │   ├── WizTree.psm1      Windows
+│   │   │   ├── Gdu.psm1          Linux/macOS 首选
+│   │   │   └── Du.psm1           Linux/macOS 兜底
+│   │   ├── Common.psm1
 │   │   ├── Identify.psm1
 │   │   └── Risk.psm1
 │   ├── scan.ps1
@@ -330,11 +385,15 @@ storops/ (repo root)
 │   ├── applications.yaml
 │   ├── caches.yaml
 │   ├── ai-models.yaml
-│   └── windows.yaml
+│   ├── windows.yaml
+│   ├── linux.yaml
+│   └── macos.yaml
 └── tests/
 ```
 
-不要为了架构完整而过早复杂化；MCP server / 完整跨平台后端属于后续阶段。
+不要为了架构完整而过早复杂化；MCP server 属于后续阶段。跨平台 scan backend
+（§4a）已经在这次改动里做了，但 `ai-models.yaml`/`applications.yaml`/
+`caches.yaml` 的 Linux/macOS 路径覆盖仍是后续工作（§4c）。
 
 ---
 
@@ -355,7 +414,12 @@ StorOps **不是** `disk-space-analyzer-skill` 的 clone，也不是 `wiztree-mc
 
 ## 20. MVP 不应该实现的东西
 
-GUI、自己实现磁盘扫描器/MFT scanner、自动后台监控、自动定时清理、跨平台完整支持、自动删除未知文件、复杂数据库、云端服务。
+GUI、自己实现磁盘扫描器/MFT scanner、自动后台监控、自动定时清理、自动删除未知文件、复杂数据库、云端服务。
+
+（"跨平台完整支持"曾经也在这份名单里——§4a/§4b/§4c 记录的 scan-backend 抽象已经把
+Linux/macOS 的核心扫描能力做出来了，是一次主动的范围扩展，而不是踩了这条非目标。
+但"完整"两个字仍未达到：`ai-models.yaml`/`applications.yaml`/`caches.yaml` 的
+Linux/macOS 应用规则、以及对应的 smoke test 覆盖，仍然是待办，见 §4c。）
 
 ---
 
