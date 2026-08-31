@@ -127,6 +127,7 @@
   category: unknown
   path_patterns:
     - "%USERPROFILE%\\Downloads\\*"
+    - "%HOME%/Downloads/*"
   confidence: 0.4
   owner: user
   purpose: >
