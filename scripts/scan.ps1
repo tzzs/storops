@@ -65,9 +65,11 @@ $rows = foreach ($entry in $entries) {
 
 if ($Json) {
     [PSCustomObject]@{
-        ScannedPath = $normalized
-        Drive       = $capacity
-        Entries     = $rows
+        ScannedPath   = $normalized
+        Drive         = $capacity
+        Entries       = $rows
+        Backend       = Get-StorOpsScanBackendName
+        BackendAdvice = Get-StorOpsScanBackendAdvice
     } | ConvertTo-Json -Depth 6
     return
 }

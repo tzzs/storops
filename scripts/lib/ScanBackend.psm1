@@ -33,9 +33,28 @@ function Get-StorOpsScanBackendName {
     return 'Du'
 }
 
+$script:StorOpsDuFallbackAdvice = "Install gdu for noticeably faster scans on large directory trees: https://github.com/dundee/gdu#installation"
+
+function Get-StorOpsScanBackendAdvice {
+    <#
+        $null when the active backend is the recommended one for this
+        platform; otherwise a short, human-readable suggestion (currently
+        only fires for the Du fallback). Entry scripts fold this into their
+        -Json output as `BackendAdvice` so an agent can act on it reliably --
+        unlike the Write-Warning below, which only reaches a human running
+        the script directly in a terminal and depends on the caller
+        capturing the warning stream at all.
+    #>
+    [CmdletBinding()]
+    param()
+
+    if ((Get-StorOpsScanBackendName) -eq 'Du') { return $script:StorOpsDuFallbackAdvice }
+    return $null
+}
+
 $script:StorOpsBackendName = Get-StorOpsScanBackendName
 if ($script:StorOpsBackendName -eq 'Du') {
-    Write-Warning "StorOps: 'gdu' not found on PATH -- falling back to 'du', which is noticeably slower on large directory trees (single-threaded, no MFT-like shortcut). Install gdu for better performance: https://github.com/dundee/gdu#installation"
+    Write-Warning "StorOps: 'gdu' not found on PATH -- falling back to 'du', which is noticeably slower on large directory trees (single-threaded, no MFT-like shortcut). $script:StorOpsDuFallbackAdvice"
 }
 
 $backendsDir = Join-Path $PSScriptRoot 'backends'
@@ -44,6 +63,7 @@ Import-Module $backendFile -Force
 
 Export-ModuleMember -Function @(
     'Get-StorOpsScanBackendName',
+    'Get-StorOpsScanBackendAdvice',
     'Invoke-StorOpsScan',
     'Get-StorOpsTopEntries',
     'Get-StorOpsPathSize'

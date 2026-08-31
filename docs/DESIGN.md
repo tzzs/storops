@@ -156,6 +156,13 @@ Linux/macOS 无 gdu  -> Du（打印一次性能提示，但仍然可用）
 `ScanBackend.psm1`，从不直接导入某个具体 backend —— 这样新增/更换一个平台的 backend 不需要碰任何
 入口脚本。`identify.ps1`/`Identify.psm1`/`Risk.psm1` 完全不感知 backend，只消费上面这组标准化字段。
 
+回退到 Du 时，`ScanBackend.psm1` 里的 `Write-Warning` 只有直接在终端里跑脚本的人能看到 ——
+agent 能否捕获到 PowerShell 的 warning 流并不确定。所以每个入口脚本的 `-Json` 输出（以及
+`cleanup-plan.ps1`/`migrate-plan.ps1` 落盘的 plan 文件）都额外带了 `Backend`（当前选中的
+backend 名）和 `BackendAdvice`（`Get-StorOpsScanBackendAdvice`：回退到 Du 时是一句建议装 gdu
+的文本，否则是 `null`）两个字段 —— 这是结构化数据，agent 一定读得到，不用赌 stderr 有没有被
+带回来。`SKILL.md` 第 13 条要求 agent 在 `BackendAdvice` 非空时提醒用户一次，而不是每条命令都念叨。
+
 ### 4b. 为什么是 gdu，而不是直接用 du
 
 `du` 是逐文件 `stat()` 遍历，单线程，瓶颈是 I/O **延迟**而不是吞吐 —— 在 SSD/NVMe 上尤其浪费，因为

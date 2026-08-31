@@ -109,6 +109,8 @@ $plan = [PSCustomObject]@{
     Items                   = $items
     TotalReclaimableBytes   = [int64]$totalReclaimable
     TotalCandidateBytes     = [int64]$totalCandidate
+    Backend                 = Get-StorOpsScanBackendName
+    BackendAdvice           = Get-StorOpsScanBackendAdvice
 }
 
 if (-not $OutFile) {

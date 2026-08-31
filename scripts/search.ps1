@@ -99,6 +99,8 @@ if ($Json) {
         MatchCount    = $filtered.Count
         ReturnedCount = $rows.Count
         Entries       = $rows
+        Backend       = Get-StorOpsScanBackendName
+        BackendAdvice = Get-StorOpsScanBackendAdvice
     } | ConvertTo-Json -Depth 6
     return
 }

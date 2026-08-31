@@ -56,10 +56,20 @@ scripts ad hoc; the user should not need to know script names.
     `migrate-execute.ps1` writes). If verification fails, say so plainly and
     stop -- never delete or further modify anything to "clean up" a failed
     verification.
-12. Don't let WizTree become a hard dependency in your reasoning. If it's
-    missing, scripts throw a clear error pointing at https://diskanalyzer.com/
-    or `$env:STOROPS_WIZTREE_PATH` -- relay that to the user rather than
-    trying to work around it some other way.
+12. Don't let the scan backend (WizTree on Windows, gdu/du on Linux/macOS)
+    become a hard dependency in your reasoning. If it's missing entirely,
+    scripts throw a clear error pointing at where to get it (WizTree:
+    https://diskanalyzer.com/ or `$env:STOROPS_WIZTREE_PATH`; gdu:
+    https://github.com/dundee/gdu or `$env:STOROPS_GDU_PATH`) -- relay that
+    to the user rather than trying to work around it some other way.
+13. On Linux/macOS, every `-Json` result from a read/plan-tier script
+    (`scan.ps1`/`inspect.ps1`/`search.ps1`/`cleanup-plan.ps1`/
+    `migrate-plan.ps1`) carries `Backend` and `BackendAdvice` fields.
+    `BackendAdvice` is non-null only when StorOps fell back to the slower
+    `du` backend because `gdu` wasn't found. Mention it to the user once per
+    conversation if it's non-null (e.g. "by the way, installing gdu would
+    make these scans noticeably faster") -- don't repeat it on every single
+    command, and don't mention it at all on Windows or when it's `$null`.
 
 ## Workflow: "why is my drive full?"
 

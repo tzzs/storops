@@ -116,6 +116,8 @@ $plan = [PSCustomObject]@{
     Method            = if ($useJunction) { 'junction' } else { $identity.MigrationMethod }
     MigrationHint     = $identity.MigrationHint
     Steps             = $steps
+    Backend           = Get-StorOpsScanBackendName
+    BackendAdvice     = Get-StorOpsScanBackendAdvice
 }
 
 $outFile = Join-Path (Get-StorOpsWorkDir) 'storops-migrate-plan.json'

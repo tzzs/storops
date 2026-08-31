@@ -62,6 +62,8 @@ if ($Json) {
     [PSCustomObject]@{
         InspectedPath = $normalized
         Entries       = $rows
+        Backend       = Get-StorOpsScanBackendName
+        BackendAdvice = Get-StorOpsScanBackendAdvice
     } | ConvertTo-Json -Depth 6
     return
 }
