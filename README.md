@@ -181,6 +181,8 @@ pwsh scripts/migrate-execute.ps1 -PlanFile .\storops-migrate-plan.json -Confirm
 pwsh scripts/verify.ps1 -ResultFile .\storops-migrate-result.json
 ```
 
+See [`CHANGELOG.md`](CHANGELOG.md) for a history of notable changes.
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
