@@ -1,0 +1,11 @@
+{
+  "name": "storops",
+  "description": "Storage Operations for AI Agents. Diagnose why a Windows drive is full, identify what specific applications/caches/AI-model files are consuming space, and safely clean up or migrate them -- with mandatory user confirmation before any write and verification after every migration.",
+  "version": "0.1.0",
+  "author": {
+    "name": "tzzs"
+  },
+  "homepage": "https://github.com/tzzs/storops",
+  "repository": "https://github.com/tzzs/storops",
+  "license": "MIT"
+}
