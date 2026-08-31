@@ -136,12 +136,21 @@ rule base actually says, and don't guess for an `unknown` result.
 
 ## Script reference
 
-| Tier  | Script | Confirmation |
-|-------|--------|--------------|
-| Read  | `scripts/scan.ps1`, `scripts/inspect.ps1`, `scripts/search.ps1`, `scripts/identify.ps1` | none |
-| Plan  | `scripts/cleanup-plan.ps1`, `scripts/migrate-plan.ps1` | none (produces a plan file only) |
-| Write | `scripts/cleanup-execute.ps1`, `scripts/migrate-execute.ps1` | requires `-Confirm` (and `-AppClosed` for migrations that need it) |
-| Verify| `scripts/verify.ps1` | none (read-only re-check) |
+Every capability below is available two ways: as a `scripts/*.ps1` script,
+or as the equivalent `storops <verb>` subcommand of the Python CLI
+(`python -m storops ...`). They are the same implementation under the hood
+-- the `.ps1` scripts are thin compatibility wrappers that shell out to
+`python -m storops` (docs/plans/storops-v2-cross-platform-refactor.md
+§2.10), so parameters, `-Json`/`--json` output, and confirmation semantics
+are identical either way. Pick whichever fits the environment; nothing
+below changes based on which form is used.
+
+| Tier  | Script | Equivalent `storops` subcommand | Confirmation |
+|-------|--------|----------------------------------|--------------|
+| Read  | `scripts/scan.ps1`, `scripts/inspect.ps1`, `scripts/search.ps1`, `scripts/identify.ps1` | `storops scan`, `storops inspect`, `storops search`, `storops identify` | none |
+| Plan  | `scripts/cleanup-plan.ps1`, `scripts/migrate-plan.ps1` | `storops cleanup plan`, `storops migrate plan` | none (produces a plan file only) |
+| Write | `scripts/cleanup-execute.ps1`, `scripts/migrate-execute.ps1` | `storops cleanup execute`, `storops migrate execute` | requires `-Confirm`/`--confirm` (and `-AppClosed`/`--app-closed` for migrations that need it) |
+| Verify| `scripts/verify.ps1` | `storops verify` | none (read-only re-check) |
 
 See `README.md` for setup/requirements and `rules/README.md` for the rule
 schema behind identification.

@@ -42,8 +42,15 @@ coverage.
 
 ## Requirements
 
+- **Python 3.11+** — this is the primary implementation now (`src/storops/`);
+  `python3`/`python` needs to be on `PATH`. No `pip install` is required for
+  the common "cloned into a skills directory" install path (see
+  [Installation](#installation) below) — `python -m storops` works straight
+  out of the checkout.
 - PowerShell 5.1+ (Windows PowerShell) on Windows, or PowerShell 7+ on
-  Linux/macOS.
+  Linux/macOS, **only if you use the `scripts/*.ps1` compatibility wrappers**
+  (see [Two ways to call it](#two-ways-to-call-it) below) — the Python CLI
+  itself has no PowerShell dependency.
 - **Windows**: NTFS volumes, plus [WizTree](https://diskanalyzer.com/)
   installed (`WizTree64.exe` on `PATH`, in a standard install location, or
   pointed to via `$env:STOROPS_WIZTREE_PATH`). Admin privileges are optional
@@ -60,9 +67,11 @@ coverage.
 
 StorOps is a plain agent skill: a directory with a `SKILL.md` at its root,
 discovered by name and description rather than invoked as a slash command. No
-build step and no dependencies to install — the agent reads `SKILL.md` to
-decide when to use the skill, then invokes the PowerShell scripts under
-`scripts/` directly. The only runtime requirement is WizTree, see
+build step and no `pip install` required — the agent reads `SKILL.md` to
+decide when to use the skill, then invokes either `python -m storops <verb>`
+or the `scripts/*.ps1` wrappers directly (see
+[Two ways to call it](#two-ways-to-call-it) below). The only runtime
+requirements are Python 3.11+ and, on Windows, WizTree — see
 [Requirements](#requirements) above.
 
 ### Ask your agent to install it (recommended)
@@ -119,19 +128,54 @@ git clone https://github.com/tzzs/storops.git .claude/skills/storops
 git clone https://github.com/tzzs/storops.git ~/.claude/skills/storops
 ```
 
+## Two ways to call it
+
+StorOps is now implemented in Python (`src/storops/`), exposed as a single
+unified CLI with one subcommand per capability — this is the primary,
+recommended calling convention:
+
+```bash
+python -m storops scan /home/me --json
+# or, if the package has been `pip install`-ed: storops scan /home/me --json
+```
+
+The original `scripts/*.ps1` entry points **still work, unchanged** — same
+script names, same parameter names, same defaults, same `-Json` output field
+names. They are now thin compatibility wrappers that translate their
+parameters into `storops` CLI flags and shell out to `python -m storops`
+under the hood; nothing about how you call them has changed:
+
+```powershell
+pwsh scripts/scan.ps1 -Path C:\ -Json
+```
+
+Both forms are fully supported and produce equivalent output — see
+[`docs/plans/storops-v2-cross-platform-refactor.md`](docs/plans/storops-v2-cross-platform-refactor.md)
+§2.10 for why (100% backward compatibility, no transition window). Use
+whichever fits your environment; an agent following `SKILL.md` can use
+either.
+
 ## Layout
 
 ```text
 SKILL.md            agent behavior contract (when/how to use this skill)
 docs/DESIGN.md       full design brief (source of truth for intent/scope)
+docs/plans/          detailed design/audit records, e.g. the v2 Python/
+                     cross-platform rewrite
 rules/               declarative identification + risk rules (YAML),
                      per-platform critical-path files plus shared app/cache rules
-scripts/             PowerShell entry points, one per capability
-scripts/lib/         shared PowerShell modules (rule matching, risk
-                     classification, plan/verification helpers)
-scripts/lib/ScanBackend.psm1   picks the platform's scan backend (docs/DESIGN.md §4a)
-scripts/lib/backends/         WizTree.psm1 (Windows), Gdu.psm1 + Du.psm1 (Linux/macOS)
-tests/               smoke tests for the rule engine and CSV parsing
+src/storops/         the Python implementation: CLI (cli.py), core business
+                     logic (core/), platform abstraction (platform/), and
+                     output rendering (output/) — see docs/plans/storops-v2-
+                     cross-platform-refactor.md §2.2 for the full tree
+scripts/             PowerShell entry points, one per capability — now thin
+                     compatibility wrappers around `python -m storops`
+scripts/lib/         plumbing shared by the scripts/*.ps1 wrappers only
+                     (Python-interpreter resolution + CLI invocation); no
+                     business logic lives here anymore
+tests/               pytest suite (tests/unit, tests/integration) for the
+                     Python implementation, plus tests/smoke.ps1 (a thin
+                     smoke test for the .ps1 wrappers themselves)
 ```
 
 ## Safety model
@@ -153,7 +197,10 @@ user documents, etc.) is ever offered for automatic deletion.
 
 An agent following `SKILL.md` will typically (examples below use Windows
 paths; on Linux/macOS pass POSIX paths instead, e.g. `-Path /` and
-`-Path ~/.cache` — `scan.ps1`/`search.ps1` default to `/` there automatically):
+`-Path ~/.cache` — `scan.ps1`/`search.ps1` default to `/` there automatically).
+Shown here as the `scripts/*.ps1` wrappers; the equivalent `python -m storops`
+form works identically (see [Two ways to call it](#two-ways-to-call-it)) —
+e.g. step 1 is also `python -m storops scan C:\`:
 
 ```powershell
 # 1. Read-only: see the big picture
