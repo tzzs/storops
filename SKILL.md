@@ -1,6 +1,6 @@
 ---
 name: storops
-description: Storage Operations for AI Agents. Diagnose why a Windows drive is full, identify what specific applications/caches/AI-model files are consuming space, and safely clean up or migrate them -- with mandatory user confirmation before any write and verification after every migration. Use when the user asks things like "why is my C: drive full", "clean up disk space", "move LM Studio / Ollama / Docker / <app> to another drive", or "is it safe to delete <path>".
+description: 'Storage Operations for AI Agents. Diagnose why a Windows drive is full, identify what specific applications/caches/AI-model files are consuming space, and safely clean up or migrate them -- with mandatory user confirmation before any write and verification after every migration. Use when the user asks things like "why is my C: drive full", "clean up disk space", "move LM Studio / Ollama / Docker / <app> to another drive", or "is it safe to delete <path>".'
 ---
 
 # StorOps
