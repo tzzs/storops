@@ -255,32 +255,52 @@ def _unknown_identity(normalized_path: str) -> PathIdentity:
     )
 
 
+def identity_from_rule(rule: Rule, path: str, matched_pattern: str | None = None) -> PathIdentity:
+    """Build a PathIdentity directly from an already-known rule, without
+    re-searching the rule base. Used by callers (core/cleanup.py's probe
+    logic) that already know exactly which rule a path came from and must
+    NOT re-derive it via identify_path() -- see that function's docstring
+    for why a naive re-search is actively wrong for a probe path.
+    """
+    return PathIdentity(
+        path=path,
+        application=rule.application,
+        category=rule.category,
+        confidence=rule.confidence,
+        owner=rule.owner,
+        purpose=rule.purpose,
+        deletable=rule.deletable,
+        migratable=rule.migratable,
+        migration_method=rule.migration_method,
+        migration_hint=rule.migration_config_hint,
+        requires_app_closed=rule.migration_requires_app_closed,
+        cleanup_risk=rule.cleanup_risk,
+        consequence=rule.cleanup_consequence,
+        notes=rule.notes,
+        matched_rule_id=rule.id,
+        matched_pattern=matched_pattern,
+    )
+
+
 def identify_path(path: str | os.PathLike[str], *, rules_dir: Path | str | None = None) -> PathIdentity:
     """The core "identify" capability: classify a single path against the
     rule base. Never guesses -- an unmatched path comes back Category
     "unknown", CleanupRisk "critical" (StorOps never assumes an unknown
     path is safe to touch). Mirrors Identify.psm1's Get-StorOpsPathIdentity.
+
+    NOTE: only meaningful for a path that is itself a *match target* (i.e.
+    something a pattern's wildcard portion would expand to cover) -- a
+    directory named exactly like a pattern's fixed prefix, with nothing
+    after it, will legitimately NOT match a "%TOKEN%/sub/*"-shaped pattern
+    (there is nothing for the trailing `*` to consume). This is correct
+    fnmatch behavior, not a bug in this function -- see identity_from_rule()
+    above for the case where a caller already knows which rule produced a
+    directory (e.g. by stripping a pattern's own trailing "/*" to get a
+    probe path) and must not fall into this trap by re-searching.
     """
     normalized = resolve_path(path)
     for rule in load_rules(rules_dir):
         for pattern in rule.path_patterns:
             if _pattern_matches(normalized, pattern):
-                return PathIdentity(
-                    path=normalized,
-                    application=rule.application,
-                    category=rule.category,
-                    confidence=rule.confidence,
-                    owner=rule.owner,
-                    purpose=rule.purpose,
-                    deletable=rule.deletable,
-                    migratable=rule.migratable,
-                    migration_method=rule.migration_method,
-                    migration_hint=rule.migration_config_hint,
-                    requires_app_closed=rule.migration_requires_app_closed,
-                    cleanup_risk=rule.cleanup_risk,
-                    consequence=rule.cleanup_consequence,
-                    notes=rule.notes,
-                    matched_rule_id=rule.id,
-                    matched_pattern=pattern,
-                )
+                return identity_from_rule(rule, normalized, pattern)
     return _unknown_identity(normalized)

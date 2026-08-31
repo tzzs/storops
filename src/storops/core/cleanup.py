@@ -64,7 +64,21 @@ def plan(max_risk: str = "low", *, out_file: str | None = None, admin: bool = Fa
         if not sized or sized.size_bytes <= 0:
             continue
 
+        # Defense in depth first: an independent full re-search might find
+        # this probe path ALSO matches something more specific/dangerous
+        # (e.g. a critical-system rule) than the deletable `rule` it was
+        # derived from -- that must win. Only if the full search comes back
+        # "unknown" do we fall back to identity_from_rule(rule, ...): a
+        # bare probe path (the pattern's trailing "/*" already stripped off
+        # to get here) will legitimately never re-match that same pattern
+        # via fnmatch (nothing left for the "*" to consume against an exact
+        # directory with no trailing separator) -- that is expected, not a
+        # sign the rule doesn't apply; we already know it does, `rule` is
+        # exactly where this probe path came from. See core/rules.py's
+        # identify_path()/identity_from_rule() docstrings.
         identity = rules.identify_path(probe_path)
+        if identity.category == "unknown":
+            identity = rules.identity_from_rule(rule, identity.path)
         action = risk.recommended_action(identity)
         if action.action != "DELETE":
             continue
