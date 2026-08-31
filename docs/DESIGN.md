@@ -357,7 +357,12 @@ storops/ (repo root)
 │   └── DESIGN.md
 ├── scripts/
 │   ├── lib/
-│   │   ├── WizTree.psm1
+│   │   ├── ScanBackend.psm1      调度器,见 §4a
+│   │   ├── backends/
+│   │   │   ├── WizTree.psm1      Windows
+│   │   │   ├── Gdu.psm1          Linux/macOS 首选
+│   │   │   └── Du.psm1           Linux/macOS 兜底
+│   │   ├── Common.psm1
 │   │   ├── Identify.psm1
 │   │   └── Risk.psm1
 │   ├── scan.ps1
@@ -373,11 +378,15 @@ storops/ (repo root)
 │   ├── applications.yaml
 │   ├── caches.yaml
 │   ├── ai-models.yaml
-│   └── windows.yaml
+│   ├── windows.yaml
+│   ├── linux.yaml
+│   └── macos.yaml
 └── tests/
 ```
 
-不要为了架构完整而过早复杂化；MCP server / 完整跨平台后端属于后续阶段。
+不要为了架构完整而过早复杂化；MCP server 属于后续阶段。跨平台 scan backend
+（§4a）已经在这次改动里做了，但 `ai-models.yaml`/`applications.yaml`/
+`caches.yaml` 的 Linux/macOS 路径覆盖仍是后续工作（§4c）。
 
 ---
 
@@ -398,7 +407,12 @@ StorOps **不是** `disk-space-analyzer-skill` 的 clone，也不是 `wiztree-mc
 
 ## 20. MVP 不应该实现的东西
 
-GUI、自己实现磁盘扫描器/MFT scanner、自动后台监控、自动定时清理、跨平台完整支持、自动删除未知文件、复杂数据库、云端服务。
+GUI、自己实现磁盘扫描器/MFT scanner、自动后台监控、自动定时清理、自动删除未知文件、复杂数据库、云端服务。
+
+（"跨平台完整支持"曾经也在这份名单里——§4a/§4b/§4c 记录的 scan-backend 抽象已经把
+Linux/macOS 的核心扫描能力做出来了，是一次主动的范围扩展，而不是踩了这条非目标。
+但"完整"两个字仍未达到：`ai-models.yaml`/`applications.yaml`/`caches.yaml` 的
+Linux/macOS 应用规则、以及对应的 smoke test 覆盖，仍然是待办，见 §4c。）
 
 ---
 
