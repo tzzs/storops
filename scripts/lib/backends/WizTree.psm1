@@ -139,8 +139,19 @@ function ConvertFrom-WizTreeCsv {
     <#
         Parse a WizTree CSV export into objects with typed, predictable
         property names, regardless of which optional export columns were
-        enabled. Columns: "File Name, Size, Allocated, Modified, Attributes,
-        Files, Folders" -- folder rows have a trailing backslash in "File Name".
+        enabled. Columns (always in this order): "File Name, Size,
+        Allocated, Modified, Attributes, Files, Folders" -- folder rows have
+        a trailing backslash in "File Name".
+
+        WizTree's CLI localizes the header row's text to the OS display
+        language (e.g. Chinese Windows exports "文件名称,大小,分配,..."
+        instead of "File Name,Size,Allocated,..."), so header detection and
+        field access below deliberately never match against English header
+        text. The header row is instead identified structurally -- it is
+        the first line with >=2 comma-separated fields whose second field is
+        not a plain integer (every data row's second field is the numeric
+        Size, which a text header never is) -- and everything after it is
+        parsed positionally against a fixed English column-name array.
     #>
     [CmdletBinding()]
     param(
@@ -148,19 +159,23 @@ function ConvertFrom-WizTreeCsv {
         [string]$CsvPath
     )
 
+    $fixedHeader = @('File Name', 'Size', 'Allocated', 'Modified', 'Attributes', 'Files', 'Folders')
+
     $lines = Get-Content -LiteralPath $CsvPath
     $headerIndex = -1
     for ($i = 0; $i -lt $lines.Length; $i++) {
-        if ($lines[$i] -match '^"?File Name"?\s*,') {
+        $fields = $lines[$i] -split ','
+        if ($fields.Length -ge 2 -and $fields[1].Trim().Trim('"') -notmatch '^-?\d+$') {
             $headerIndex = $i
             break
         }
     }
     if ($headerIndex -lt 0) {
-        throw "StorOps: '$CsvPath' does not look like a WizTree export (no 'File Name' header row found)."
+        throw "StorOps: '$CsvPath' does not look like a WizTree export (no header row found)."
     }
 
-    $rows = $lines[$headerIndex..($lines.Length - 1)] | ConvertFrom-Csv
+    $dataLines = $lines[($headerIndex + 1)..($lines.Length - 1)]
+    $rows = if ($dataLines) { $dataLines | ConvertFrom-Csv -Header $fixedHeader } else { @() }
     foreach ($row in $rows) {
         $props = $row.PSObject.Properties.Name
         $name = $row.'File Name'

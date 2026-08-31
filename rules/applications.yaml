@@ -138,7 +138,7 @@
   application: WSL
   category: vm-disk
   path_patterns:
-    - "%LOCALAPPDATA%\\Packages\\*.WSL*\\LocalState\\*.vhdx"
+    - "%LOCALAPPDATA%\\Packages\\*\\LocalState\\ext4.vhdx"
     - "%USERPROFILE%\\AppData\\Local\\wsl\\*\\ext4.vhdx"
   confidence: 0.85
   owner: user
@@ -153,6 +153,13 @@
   migration_requires_app_closed: true
   cleanup_risk: critical
   cleanup_consequence: Deleting it destroys the entire Linux distro's filesystem and everything installed inside it.
+  notes: >
+    Store-installed WSL distro packages are named after the distro/publisher
+    (e.g. TheDebianProject.DebianGNULinux_xxxx, CanonicalGroupLimited.Ubuntu_xxxx)
+    and never contain the literal text "WSL", so the previous pattern
+    "*.WSL*\LocalState\*.vhdx" never matched any real installation. WSL2
+    distro virtual disks are always named ext4.vhdx regardless of publisher,
+    so match on that fixed filename instead.
 
 - id: vscode-caches-workspacestorage
   application: Visual Studio Code

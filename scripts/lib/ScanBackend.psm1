@@ -18,7 +18,7 @@
 
 Set-StrictMode -Version Latest
 
-Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force -Global
 
 function Get-StorOpsScanBackendName {
     <#
