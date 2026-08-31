@@ -73,7 +73,16 @@ function Invoke-StorOpsCli {
     Remove-Item -LiteralPath $stderrFile -ErrorAction SilentlyContinue
 
     if ($stderrText) {
-        ($stderrText -split "`r?`n") | Where-Object { $_ } | ForEach-Object { Write-Warning $_ }
+        # Deliberately NOT Write-Warning: verified (2026-09-01, real
+        # pwsh 7.4.6, `pwsh -File x.ps1 1>out 2>err`) that Write-Warning's
+        # output lands on the process's actual STDOUT file descriptor in
+        # this non-interactive host, not stderr -- which would silently
+        # break the -Json stdout-purity contract every time a scan
+        # backend prints a BackendAdvice warning (i.e. on nearly every
+        # `du`-fallback run). [Console]::Error.WriteLine writes to the
+        # real OS-level stderr regardless of how the process's streams
+        # were redirected -- confirmed with the same test.
+        ($stderrText -split "`r?`n") | Where-Object { $_ } | ForEach-Object { [Console]::Error.WriteLine($_) }
     }
 
     return $stdout
