@@ -187,7 +187,11 @@ function Invoke-StorOpsScan {
             $entries = @($entries | Where-Object { (Split-Path -Leaf $_.FullName) -notlike $FilterExclude })
         }
 
-        return @($entries)
+        # NOTE: deliberately NOT `return @($entries)` -- see the matching
+        # comment in backends/Du.psm1 for the PowerShell 7.4.x engine bug
+        # this works around (`@()` on a List[object] throws "Argument types
+        # do not match", independent of content).
+        return $entries
     }
     finally {
         Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue

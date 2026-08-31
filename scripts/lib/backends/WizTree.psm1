@@ -237,7 +237,11 @@ function Invoke-StorOpsScan {
         -MaxDepth $MaxDepth -SortBy 1 -Filter $Filter -FilterExclude $FilterExclude `
         -Admin:$Admin -TimeoutSeconds $TimeoutSeconds
     try {
-        return @(ConvertFrom-WizTreeCsv -CsvPath $csv)
+        # NOTE: deliberately NOT `return @(...)` -- see the matching comment
+        # in backends/Du.psm1 for the PowerShell 7.4.x engine bug this works
+        # around (`@()` on a List[object], which ConvertFrom-WizTreeCsv
+        # streams, throws "Argument types do not match").
+        return ConvertFrom-WizTreeCsv -CsvPath $csv
     }
     finally {
         Remove-Item -LiteralPath $csv -Force -ErrorAction SilentlyContinue

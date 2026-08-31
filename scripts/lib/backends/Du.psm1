@@ -122,7 +122,18 @@ function Invoke-StorOpsScan {
         })
     }
 
-    return @($entries)
+    # NOTE: deliberately NOT `return @($entries)` here -- on PowerShell 7.4.x,
+    # the `@()` array-subexpression operator applied directly to a
+    # System.Collections.Generic.List[object] triggers an engine-level
+    # PSEnumerableBinder bug (`ArgumentException: Argument types do not
+    # match`), reproducible even for an empty list, independent of content.
+    # Returning the collection bare lets PowerShell's normal output-stream
+    # enumeration flatten it (0 items -> nothing emitted, N items -> N
+    # objects streamed) -- callers already re-collect via `@(Invoke-...)` or
+    # a `Sort-Object | Select-Object` pipeline, so this is equivalent and
+    # avoids the binder entirely. Matches the working pattern already used
+    # by Get-StorOpsRules's `return $all` in Identify.psm1.
+    return $entries
 }
 
 function Get-StorOpsTopEntries {
