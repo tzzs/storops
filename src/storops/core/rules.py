@@ -230,8 +230,32 @@ def expand_pattern_tokens(pattern: str) -> str:
 
 
 def _pattern_matches(normalized_path: str, pattern: str) -> bool:
-    expanded = expand_pattern_tokens(pattern)
-    return fnmatch(normalize_separators(normalized_path), normalize_separators(expanded))
+    """True if `normalized_path` is described by `pattern`.
+
+    A "%TOKEN%/sub/*"-shaped pattern is authored to mean "this directory,
+    and everything inside it" (see rules/README.md's own examples, and
+    SKILL.md/README.md's migrate-plan examples, which pass the bare
+    top-level directory itself -- e.g. "...\\.lmstudio\\models" -- as the
+    thing to migrate). But plain fnmatch only ever matches candidates
+    strictly INSIDE that directory for a trailing "/*": there is nothing
+    left for the "*" to consume against a candidate with no trailing
+    separator, so the bare directory itself never matches on its own.
+    That silently broke `storops migrate plan` and `storops cleanup plan`
+    for exactly the common "top-level folder scan/inspect just surfaced"
+    case -- found via end-to-end testing, not by inspection; the original
+    PowerShell version's `-like` operator has the identical false-negative
+    for the identical reason, so this was never Python-specific. Fixed
+    here, once, for every caller (identify_path, and therefore scan/
+    inspect/search/identify/cleanup/migrate all get it for free) rather
+    than working around it at each call site.
+    """
+    expanded = normalize_separators(expand_pattern_tokens(pattern))
+    candidate = normalize_separators(normalized_path)
+    if fnmatch(candidate, expanded):
+        return True
+    if expanded.endswith("/*") and candidate == expanded[: -len("/*")]:
+        return True
+    return False
 
 
 def _unknown_identity(normalized_path: str) -> PathIdentity:
