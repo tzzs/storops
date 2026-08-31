@@ -79,7 +79,7 @@ pwsh scripts/inspect.ps1 -Path C:\Users\me\AppData\Local
 pwsh scripts/identify.ps1 -Path C:\Users\me\.lmstudio\models
 
 # 4. Plan-only: build an itemized, risk-classified cleanup plan
-pwsh scripts/cleanup-plan.ps1 -Path C:\ -MaxRisk Low
+pwsh scripts/cleanup-plan.ps1 -MaxRisk low
 
 # 5. Write, only after the user approves the plan from step 4
 pwsh scripts/cleanup-execute.ps1 -PlanFile .\storops-cleanup-plan.json -Confirm
@@ -88,7 +88,10 @@ pwsh scripts/cleanup-execute.ps1 -PlanFile .\storops-cleanup-plan.json -Confirm
 pwsh scripts/migrate-plan.ps1 -Path C:\Users\me\.lmstudio\models -Destination E:\AI\LMStudio\models
 
 # 7. Write, only after the user approves the plan from step 6 — always verified
-pwsh scripts/migrate-execute.ps1 -PlanFile .\storops-migration-plan.json -Confirm
+pwsh scripts/migrate-execute.ps1 -PlanFile .\storops-migrate-plan.json -Confirm
+
+# 8. Read-only: re-check the migration's result at any later time
+pwsh scripts/verify.ps1 -ResultFile .\storops-migrate-result.json
 ```
 
 ## License
