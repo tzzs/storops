@@ -8,20 +8,31 @@ Selected automatically by platform/base.py's get_scan_backend() when `gdu`
 is on PATH (or $STOROPS_GDU_PATH is set); falls back to backends/du.py
 otherwise.
 
-UNVERIFIED, matching backends/Gdu.psm1's own caveat: authored without a
-live gdu install to test against (this sandbox has neither a Windows
-machine nor a gdu binary available). The JSON export shape parsed below
-follows gdu's own documented dump format -- a
-[schemaVersion, flags, rootNode] array where each node carries
-name/asize/dsize/isDir/files -- but this is the one thing here that should
-be double-checked against `gdu --help` and a real
-`gdu -n -o out.json <path>` run before relying on it in production, the
-same caveat WizTree.psm1 carries for its own CLI assumptions.
+Verified 2026-09-01 against a real `gdu 5.25.0` install (`apt install gdu`
+on Debian) -- the JSON shape assumed by an earlier draft of this module
+(and by the PowerShell Gdu.psm1 it was ported from) was wrong in two
+ways, found by actually running `gdu -n -o out.json <path>` and reading
+the real output rather than trusting the documented/guessed shape:
+
+  1. The tree is `raw[3]`, not `raw[2]` (`raw[2]` is a small metadata
+     object -- progname/progver/timestamp -- not the root node). The
+     earlier code read `raw[2]` and got that metadata object instead,
+     which has no "files" key, so every scan silently returned an empty
+     result no matter what was actually on disk.
+  2. The tree is nested **arrays**, not nested **objects with a "files"
+     key**: `[dirInfo, child1, child2, ...]` where each child is either a
+     plain dict (a file: `{"name", "asize", "dsize", "mtime"}`) or
+     another such array (a subdirectory). There is no `isDir` boolean
+     anywhere -- directory-ness is `isinstance(child, list)`. Directory
+     entries also do NOT carry their own `asize`/`dsize` -- StorOps has
+     to recursively sum a directory's descendant files itself (see
+     _process_dir below), gdu does not pre-aggregate them in the export.
 
 gdu always builds the *whole* tree before exporting (no native
 depth-limit flag the way WizTree's /exportmaxdepth or du's --max-depth
-provide) -- max_depth is applied by StorOps after the fact, by simply not
-recursing/emitting past it (see _flatten_node below).
+provide) -- so directory sizes are always computed by summing the full
+subtree regardless of max_depth; max_depth only controls which depths get
+turned into emitted Entry objects (see _process_dir's `collected` param).
 """
 from __future__ import annotations
 
@@ -72,60 +83,86 @@ def _resolve_gdu_path() -> str:
     raise BackendNotFoundError(_GDU_INSTALL_HELP)
 
 
-def _flatten_node(
-    node: dict,
-    parent_path: str,
+def _process_dir(
+    dir_array: list,
+    dir_path: str,
     depth: int,
     *,
     max_depth: int,
     export_folders: bool,
     export_files: bool,
-) -> list[Entry]:
-    """Flatten one gdu tree node's children into StorOps Entry objects,
-    recursing only as far as max_depth allows (0 = unlimited). depth == 1
-    means "immediate child of the scanned root", matching WizTree's
-    /exportmaxdepth "relative to scanned target" semantics.
+    collected: list[Entry],
+) -> tuple[int, int, int, int]:
+    """Process one gdu directory array `[dirInfo, child1, child2, ...]`,
+    recursively summing descendant sizes (directory nodes never carry their
+    own asize/dsize in gdu's export -- see module docstring) and appending
+    an Entry to `collected` for each child within `max_depth` (0 =
+    unlimited). `depth` is this directory's own depth relative to the scan
+    root (root itself = depth 0, so its direct children are emitted at
+    depth 1 -- matching WizTree's /exportmaxdepth "relative to scanned
+    target" semantics and backends/du.py's convention).
+
+    Returns (total_asize, total_dsize, direct_file_count, direct_folder_count)
+    for THIS directory -- i.e. the aggregate size of everything under it,
+    and how many immediate file/folder children it has (not recursive
+    counts) -- so the caller can build an accurate Entry for it.
     """
-    results: list[Entry] = []
-    full_path = os.path.join(parent_path, node.get("name", ""))
-    is_dir = bool(node.get("isDir"))
-    children = node.get("files") or []
+    total_asize = 0
+    total_dsize = 0
+    direct_file_count = 0
+    direct_folder_count = 0
 
-    if max_depth == 0 or depth <= max_depth:
-        if (is_dir and export_folders) or (not is_dir and export_files):
-            file_count = None
-            folder_count = None
-            if is_dir and children:
-                file_count = sum(1 for c in children if not c.get("isDir"))
-                folder_count = sum(1 for c in children if c.get("isDir"))
-            asize = int(node.get("asize", 0))
-            dsize = node.get("dsize")
-            results.append(
-                Entry(
-                    full_name=full_path,
-                    is_folder=is_dir,
-                    size_bytes=asize,
-                    allocated_bytes=int(dsize) if dsize is not None else asize,
-                    modified=None,  # gdu's JSON export does not carry mtimes
-                    file_count=file_count,
-                    folder_count=folder_count,
-                )
+    for child in dir_array[1:]:
+        if isinstance(child, list):
+            child_info = child[0] if child else {}
+            child_name = child_info.get("name", "")
+            child_path = os.path.join(dir_path, child_name)
+            child_asize, child_dsize, child_files, child_folders = _process_dir(
+                child,
+                child_path,
+                depth + 1,
+                max_depth=max_depth,
+                export_folders=export_folders,
+                export_files=export_files,
+                collected=collected,
             )
-
-    if is_dir and children and (max_depth == 0 or depth < max_depth):
-        for child in children:
-            results.extend(
-                _flatten_node(
-                    child,
-                    full_path,
-                    depth + 1,
-                    max_depth=max_depth,
-                    export_folders=export_folders,
-                    export_files=export_files,
+            total_asize += child_asize
+            total_dsize += child_dsize
+            direct_folder_count += 1
+            if export_folders and (max_depth == 0 or depth + 1 <= max_depth):
+                collected.append(
+                    Entry(
+                        full_name=child_path,
+                        is_folder=True,
+                        size_bytes=child_asize,
+                        allocated_bytes=child_dsize,
+                        modified=None,  # gdu's JSON export carries mtime per-node, not surfaced here (v1 parity: same as WizTree/du backends' folder rows)
+                        file_count=child_files,
+                        folder_count=child_folders,
+                    )
                 )
-            )
+        else:
+            child_name = child.get("name", "")
+            child_path = os.path.join(dir_path, child_name)
+            asize = int(child.get("asize", 0))
+            dsize = int(child.get("dsize", asize))
+            total_asize += asize
+            total_dsize += dsize
+            direct_file_count += 1
+            if export_files and (max_depth == 0 or depth + 1 <= max_depth):
+                collected.append(
+                    Entry(
+                        full_name=child_path,
+                        is_folder=False,
+                        size_bytes=asize,
+                        allocated_bytes=dsize,
+                        modified=None,
+                        file_count=None,
+                        folder_count=None,
+                    )
+                )
 
-    return results
+    return total_asize, total_dsize, direct_file_count, direct_folder_count
 
 
 class GduBackend:
@@ -182,21 +219,25 @@ class GduBackend:
             with open(out_file, "r", encoding="utf-8") as fh:
                 raw = json.load(fh)
 
-            # [schemaVersion, flags, rootNode] -- see this module's docstring.
-            root_node = raw[2]
+            # [schemaVersion, someFlag, metaInfo, tree] -- tree is
+            # [rootDirInfo, child1, child2, ...]; see module docstring.
+            tree = raw[3]
+            if not isinstance(tree, list) or not tree:
+                raise StoropsError(
+                    f"StorOps: gdu's JSON export for '{target}' did not have the expected "
+                    f"[schemaVersion, flags, meta, [rootInfo, ...children]] shape."
+                )
 
             entries: list[Entry] = []
-            for child in root_node.get("files") or []:
-                entries.extend(
-                    _flatten_node(
-                        child,
-                        target,
-                        1,
-                        max_depth=max_depth,
-                        export_folders=export_folders,
-                        export_files=export_files,
-                    )
-                )
+            _process_dir(
+                tree,
+                target,
+                0,
+                max_depth=max_depth,
+                export_folders=export_folders,
+                export_files=export_files,
+                collected=entries,
+            )
 
             # gdu has no native per-file name filter (only directory-exclude
             # via -i, not used here); apply name_filter/name_exclude
