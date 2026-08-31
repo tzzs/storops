@@ -225,9 +225,43 @@ function Get-StorOpsTopEntries {
     }
 }
 
+function Get-StorOpsPathSize {
+    <#
+        Look up one specific, already-known path's size by scanning its
+        parent directory one level deep and picking out the matching row.
+        Used by cleanup-plan.ps1/migrate-plan.ps1 to size a handful of
+        specific candidate paths (derived from rules/*.yaml) without ever
+        exporting a whole drive. Returns $null if the path doesn't exist or
+        wasn't found in its parent's listing.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+
+        [switch]$Admin
+    )
+
+    $normalized = Resolve-StorOpsPath -Path $Path
+    if (-not (Test-Path -LiteralPath $normalized)) { return $null }
+
+    $parent = Split-Path -Parent $normalized
+    if (-not $parent) { return $null }
+
+    $csv = Invoke-WizTreeScan -Path $parent -ExportFolders $true -ExportFiles $true -MaxDepth 1 -SortBy 1 -Admin:$Admin
+    try {
+        $rows = ConvertFrom-WizTreeCsv -CsvPath $csv
+        return $rows | Where-Object { $_.FullName -eq $normalized } | Select-Object -First 1
+    }
+    finally {
+        Remove-Item -LiteralPath $csv -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Export-ModuleMember -Function @(
     'Get-StorOpsWizTreePath',
     'Invoke-WizTreeScan',
     'ConvertFrom-WizTreeCsv',
-    'Get-StorOpsTopEntries'
+    'Get-StorOpsTopEntries',
+    'Get-StorOpsPathSize'
 )
