@@ -2,7 +2,9 @@
 <#
     Dependency-free smoke test for the rule reader (scripts/lib/Identify.psm1)
     and risk engine (scripts/lib/Risk.psm1). No Pester dependency on purpose,
-    to keep StorOps installable with nothing beyond PowerShell + WizTree.
+    to keep StorOps installable with nothing beyond PowerShell (+ WizTree on
+    Windows, or gdu/du on Linux/macOS -- this test itself never touches a
+    scan backend, so none of those are required just to run it).
 
     Run on Windows PowerShell / PowerShell 7:
         pwsh tests/smoke.ps1
@@ -10,7 +12,10 @@
     This repo was authored without access to a Windows machine, so this is
     the first thing to run after cloning on real Windows before trusting any
     other script here -- it specifically exercises the hand-rolled YAML-subset
-    reader in Identify.psm1 against the real rules/*.yaml files.
+    reader in Identify.psm1 against the real rules/*.yaml files. The
+    assertions below are Windows-path-specific (env:USERPROFILE, C:\...,
+    System32) since they test windows.yaml/ai-models.yaml; the equivalent
+    coverage for linux.yaml/macos.yaml is not yet written (docs/DESIGN.md §4c).
 #>
 
 param()

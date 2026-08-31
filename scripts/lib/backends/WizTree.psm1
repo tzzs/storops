@@ -1,7 +1,10 @@
 #requires -Version 5.1
 <#
-    StorOps' only integration point with WizTree: locate the CLI, invoke its
-    command-line export, and parse the resulting CSV into PowerShell objects.
+    StorOps' Windows scan backend (docs/DESIGN.md §4a): locate the WizTree
+    CLI, invoke its command-line export, and parse the resulting CSV into
+    PowerShell objects. Selected automatically by ScanBackend.psm1 on
+    Windows -- see backends/Gdu.psm1 and backends/Du.psm1 for the
+    Linux/macOS equivalents.
 
     StorOps never drives the WizTree GUI (no automation/screenshots/OCR) and
     never re-implements NTFS/MFT scanning itself -- see docs/DESIGN.md §5.
@@ -194,6 +197,38 @@ function ConvertFrom-WizTreeCsv {
     }
 }
 
+function Invoke-StorOpsScan {
+    <#
+        StorOps' standardized scan entry point (see docs/DESIGN.md §4a):
+        runs a WizTree export and returns normalized, in-memory objects
+        directly instead of a CSV path -- callers (ScanBackend.psm1,
+        search.ps1) never touch the CSV plumbing or its temp file.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+
+        [bool]$ExportFolders = $true,
+        [bool]$ExportFiles = $false,
+        [int]$MaxDepth = 0,
+        [string]$Filter,
+        [string]$FilterExclude,
+        [switch]$Admin,
+        [int]$TimeoutSeconds = 300
+    )
+
+    $csv = Invoke-WizTreeScan -Path $Path -ExportFolders $ExportFolders -ExportFiles $ExportFiles `
+        -MaxDepth $MaxDepth -SortBy 1 -Filter $Filter -FilterExclude $FilterExclude `
+        -Admin:$Admin -TimeoutSeconds $TimeoutSeconds
+    try {
+        return @(ConvertFrom-WizTreeCsv -CsvPath $csv)
+    }
+    finally {
+        Remove-Item -LiteralPath $csv -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Get-StorOpsTopEntries {
     <#
         The workhorse behind scan.ps1 and inspect.ps1: scan a target path to
@@ -262,6 +297,7 @@ Export-ModuleMember -Function @(
     'Get-StorOpsWizTreePath',
     'Invoke-WizTreeScan',
     'ConvertFrom-WizTreeCsv',
+    'Invoke-StorOpsScan',
     'Get-StorOpsTopEntries',
     'Get-StorOpsPathSize'
 )

@@ -1,0 +1,139 @@
+# StorOps identification rules — macOS system paths.
+# Matched alongside windows.yaml/linux.yaml (see rules/README.md); only the
+# %HOME%/%CACHES%/%APP_SUPPORT%/%XDG_CACHE_HOME%/%TMPDIR% tokens relevant to
+# macOS actually expand here, so this file is a no-op on Windows/Linux
+# rather than being conditionally loaded (docs/DESIGN.md §4c).
+#
+# Everything here is category: os-system, risk: critical, deletable: false,
+# migratable: false. StorOps must never offer these for cleanup or migration,
+# regardless of what the user asks for.
+#
+# NOTE: this is a starter set covering the same *kind* of paths windows.yaml
+# covers (OS itself, installed apps, user profile/library, user documents) --
+# it does not yet attempt parity with ai-models.yaml/applications.yaml/
+# caches.yaml, whose path_patterns are still Windows-token-only. Extending
+# those to macOS equivalents (LM Studio, Ollama, Docker Desktop, npm/pip
+# caches under %CACHES%/%XDG_CACHE_HOME%, etc.) is separate follow-up work.
+
+- id: macos-system
+  application: macOS
+  category: os-system
+  path_patterns:
+    - "/System/*"
+  confidence: 1.0
+  owner: system
+  purpose: >
+    The operating system itself, protected by System Integrity Protection
+    (SIP) on modern macOS -- StorOps should never even be able to write
+    here, but must never *recommend* touching it either.
+  deletable: false
+  migratable: false
+  migration_method: none
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Modifying anything here can render macOS unbootable, and most of it is
+    SIP-protected regardless of permissions.
+
+- id: macos-library-system
+  application: System Library
+  category: os-system
+  path_patterns:
+    - "/Library/*"
+    - "/private/var/db/*"
+    - "/private/etc/*"
+  confidence: 0.85
+  owner: system
+  purpose: >
+    System-wide (all-user) frameworks, extensions, and daemon state, plus
+    core system configuration/database files under /private.
+  deletable: false
+  migratable: false
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Can break system daemons, printer/driver support, or OS updates.
+  notes: >
+    Distinct from the *user* Library (%CACHES%/%APP_SUPPORT%, i.e.
+    ~/Library/Caches, ~/Library/Application Support), which is where
+    per-app caches actually worth cleaning up live -- see caches.yaml.
+
+- id: macos-applications
+  application: Applications
+  category: os-system
+  path_patterns:
+    - "/Applications/*"
+  confidence: 0.9
+  owner: system
+  purpose: Installed application bundles for all users.
+  deletable: false
+  migratable: false
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Deleting an app bundle directly instead of uninstalling it can leave
+    orphaned system state (LaunchAgents, receipts) and break Spotlight/
+    Launch Services; the correct way to remove an app is to move it to the
+    Trash via Finder (or its own uninstaller), not for StorOps to delete
+    the bundle's contents.
+  notes: >
+    A specific, identified cache/support subfolder owned by one app (under
+    %CACHES%/%APP_SUPPORT%) may still be handled by a more specific rule in
+    applications.yaml/caches.yaml -- but the bare /Applications tree itself
+    is never a cleanup/migration target.
+
+- id: macos-swap-sleepimage
+  application: macOS Virtual Memory
+  category: os-system
+  path_patterns:
+    - "/private/var/vm/swapfile*"
+    - "/private/var/vm/sleepimage"
+  confidence: 1.0
+  owner: system
+  purpose: Virtual memory swap files and the hibernation image.
+  deletable: false
+  migratable: false
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Managed entirely by the kernel; deleting/moving these outside macOS'
+    own memory management can cause instability or loss of Safe Sleep.
+
+- id: macos-user-ssh
+  application: SSH keys/config
+  category: unknown
+  path_patterns:
+    - "%HOME%/.ssh/*"
+  confidence: 0.95
+  owner: user
+  purpose: SSH private keys, known_hosts, and client configuration.
+  deletable: false
+  migratable: false
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Deleting this can lock the user out of every host it has keys for, and
+    is not re-creatable by StorOps. Never offered for cleanup or migration.
+
+- id: macos-user-documents-desktop
+  application: User Documents
+  category: unknown
+  path_patterns:
+    - "%HOME%/Documents/*"
+    - "%HOME%/Desktop/*"
+    - "%HOME%/Pictures/*"
+    - "%HOME%/Library/Mail/*"
+  confidence: 0.6
+  owner: user
+  purpose: >
+    User-authored content and local Mail data. StorOps has no basis to
+    judge value or disposability of arbitrary personal files, even though
+    this is not an OS path.
+  deletable: false
+  migratable: true
+  migration_method: manual
+  migration_config_hint: >
+    User-initiated move (e.g. via Finder, or the relevant app's own storage
+    location setting), never automatic.
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Irreplaceable personal data/mail; StorOps never recommends deleting
+    anything under here.
+  notes: >
+    Treated as critical for deletion purposes even though it is user data,
+    not system data -- the bar for touching it automatically is the same.

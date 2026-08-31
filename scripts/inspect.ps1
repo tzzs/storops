@@ -31,7 +31,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $libRoot = Join-Path $PSScriptRoot 'lib'
 Import-Module (Join-Path $libRoot 'Common.psm1') -Force
-Import-Module (Join-Path $libRoot 'WizTree.psm1') -Force
+Import-Module (Join-Path $libRoot 'ScanBackend.psm1') -Force
 Import-Module (Join-Path $libRoot 'Identify.psm1') -Force
 Import-Module (Join-Path $libRoot 'Risk.psm1') -Force
 

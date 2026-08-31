@@ -1,0 +1,141 @@
+# StorOps identification rules — Linux system paths.
+# Matched alongside windows.yaml/macos.yaml (see rules/README.md); only the
+# %HOME%/%XDG_*%/%TMPDIR% tokens relevant to Linux actually expand here, so
+# this file is a no-op on Windows/macOS rather than being conditionally
+# loaded (docs/DESIGN.md §4c).
+#
+# Everything here is category: os-system, risk: critical, deletable: false,
+# migratable: false. StorOps must never offer these for cleanup or migration,
+# regardless of what the user asks for.
+#
+# NOTE: this is a starter set covering the same *kind* of paths windows.yaml
+# covers (kernel/boot, package/system state, user profile, user documents) --
+# it does not yet attempt parity with ai-models.yaml/applications.yaml/
+# caches.yaml, whose path_patterns are still Windows-token-only. Extending
+# those to Linux equivalents (LM Studio, Ollama, Docker, npm/pip caches
+# under %XDG_CACHE_HOME%, etc.) is separate follow-up work.
+
+- id: linux-kernel-virtual-fs
+  application: Linux kernel
+  category: os-system
+  path_patterns:
+    - "/proc/*"
+    - "/sys/*"
+    - "/dev/*"
+  confidence: 1.0
+  owner: system
+  purpose: >
+    Kernel-exposed virtual filesystems (process/device/kernel state) -- not
+    real on-disk data, reported sizes here are meaningless and StorOps must
+    never attempt to scan, delete, or move anything under these roots.
+  deletable: false
+  migratable: false
+  migration_method: none
+  cleanup_risk: critical
+  cleanup_consequence: >
+    These are not real files; touching them can crash the running kernel
+    or hang the calling process. StorOps never scans into these roots.
+
+- id: linux-boot
+  application: Linux bootloader/kernel
+  category: os-system
+  path_patterns:
+    - "/boot/*"
+  confidence: 1.0
+  owner: system
+  purpose: Kernel images, initramfs, and bootloader (GRUB/systemd-boot) configuration.
+  deletable: false
+  migratable: false
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Deleting or moving anything here can make the system unbootable.
+
+- id: linux-system-tree
+  application: Linux base system
+  category: os-system
+  path_patterns:
+    - "/bin/*"
+    - "/sbin/*"
+    - "/lib/*"
+    - "/lib64/*"
+    - "/usr/*"
+    - "/etc/*"
+    - "/var/lib/*"
+  confidence: 0.9
+  owner: system
+  purpose: >
+    Core OS binaries, shared libraries, system-wide configuration, and
+    package-manager-owned state (dpkg/rpm/pacman databases, systemd unit
+    state, etc.).
+  deletable: false
+  migratable: false
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Breaks the package manager, systemd, or the base system itself. The
+    correct way to reclaim space here is the system's own package manager
+    (e.g. `apt autoremove`, `dnf clean`), not StorOps deleting files
+    directly -- StorOps does not execute those either.
+  notes: >
+    A specific, identified subfolder under /var (e.g. a known package
+    manager's own cache, like /var/cache/apt/archives) may still be handled
+    by a more specific, less-critical rule in caches.yaml -- but the bare
+    system tree itself is never a cleanup/migration target.
+
+- id: linux-swap
+  application: Linux swap
+  category: os-system
+  path_patterns:
+    - "/swapfile"
+    - "/swap.img"
+  confidence: 0.9
+  owner: system
+  purpose: Swap file backing virtual memory.
+  deletable: false
+  migratable: false
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Deleting an active swap file can crash the system under memory
+    pressure. Resize swap via the OS's own tooling (e.g. dphys-swapfile,
+    systemd-swap), not by StorOps touching the file.
+
+- id: linux-user-ssh
+  application: SSH keys/config
+  category: unknown
+  path_patterns:
+    - "%HOME%/.ssh/*"
+  confidence: 0.95
+  owner: user
+  purpose: SSH private keys, known_hosts, and client configuration.
+  deletable: false
+  migratable: false
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Deleting this can lock the user out of every host it has keys for, and
+    is not re-creatable by StorOps. Never offered for cleanup or migration.
+
+- id: linux-user-documents-desktop
+  application: User Documents
+  category: unknown
+  path_patterns:
+    - "%HOME%/Documents/*"
+    - "%HOME%/Desktop/*"
+    - "%HOME%/Pictures/*"
+  confidence: 0.6
+  owner: user
+  purpose: >
+    User-authored content. StorOps has no basis to judge value or
+    disposability of arbitrary personal files, even though this is not an
+    OS path.
+  deletable: false
+  migratable: true
+  migration_method: manual
+  migration_config_hint: >
+    User-initiated move (e.g. relocate the folder and update any symlinks
+    that point at it), never automatic.
+  cleanup_risk: critical
+  cleanup_consequence: >
+    Irreplaceable personal data; StorOps never recommends deleting anything
+    under here.
+  notes: >
+    Treated as critical for deletion purposes even though it is user data,
+    not system data -- the bar for touching it automatically is the same.

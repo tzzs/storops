@@ -140,7 +140,11 @@ function Get-StorOpsRules {
         return $script:StorOpsRuleCache
     }
 
-    $orderedFiles = 'windows.yaml', 'ai-models.yaml', 'applications.yaml', 'caches.yaml'
+    # windows/linux/macos.yaml are always all loaded regardless of the
+    # current platform: only the current platform's %TOKEN% set actually
+    # expands (Expand-StorOpsPatternTokens), so the other two files' rules
+    # simply never match anything real -- see docs/DESIGN.md §4c.
+    $orderedFiles = 'windows.yaml', 'linux.yaml', 'macos.yaml', 'ai-models.yaml', 'applications.yaml', 'caches.yaml'
     $all = New-Object System.Collections.Generic.List[object]
     foreach ($file in $orderedFiles) {
         $path = Join-Path $RulesDirectory $file
@@ -160,20 +164,52 @@ function Expand-StorOpsPatternTokens {
     <#
         Expand the %VAR% tokens documented in rules/README.md into their
         current environment values. Tokens are matched case-sensitively as
-        written (always upper-case) -- author new rules accordingly.
+        written (always upper-case) -- author new rules accordingly. The
+        token set is platform-dependent (docs/DESIGN.md §4c): a token from
+        another platform's set is left un-expanded and simply never matches
+        a real path, which is why Get-StorOpsRules loads windows/linux/
+        macos.yaml unconditionally regardless of the current platform.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Pattern)
 
-    $tokens = [ordered]@{
-        '%USERPROFILE%'       = $env:USERPROFILE
-        '%LOCALAPPDATA%'      = $env:LOCALAPPDATA
-        '%APPDATA%'           = $env:APPDATA
-        '%PROGRAMDATA%'       = $env:ProgramData
-        '%PROGRAMFILES%'      = $env:ProgramFiles
-        '%PROGRAMFILES(X86)%' = ${env:ProgramFiles(x86)}
-        '%TEMP%'              = $env:TEMP
-        '%SYSTEMROOT%'        = $env:SystemRoot
+    switch (Get-StorOpsPlatform) {
+        'Windows' {
+            $tokens = [ordered]@{
+                '%USERPROFILE%'       = $env:USERPROFILE
+                '%LOCALAPPDATA%'      = $env:LOCALAPPDATA
+                '%APPDATA%'           = $env:APPDATA
+                '%PROGRAMDATA%'       = $env:ProgramData
+                '%PROGRAMFILES%'      = $env:ProgramFiles
+                '%PROGRAMFILES(X86)%' = ${env:ProgramFiles(x86)}
+                '%TEMP%'              = $env:TEMP
+                '%SYSTEMROOT%'        = $env:SystemRoot
+            }
+        }
+        'MacOS' {
+            $xdgCache = if ($env:XDG_CACHE_HOME) { $env:XDG_CACHE_HOME } else { Join-Path $HOME '.cache' }
+            $tmpDir = if ($env:TMPDIR) { $env:TMPDIR } else { '/tmp' }
+            $tokens = [ordered]@{
+                '%HOME%'           = $HOME
+                '%CACHES%'         = (Join-Path $HOME 'Library/Caches')
+                '%APP_SUPPORT%'    = (Join-Path $HOME 'Library/Application Support')
+                '%XDG_CACHE_HOME%' = $xdgCache
+                '%TMPDIR%'         = $tmpDir
+            }
+        }
+        default {
+            $xdgCache = if ($env:XDG_CACHE_HOME) { $env:XDG_CACHE_HOME } else { Join-Path $HOME '.cache' }
+            $xdgConfig = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $HOME '.config' }
+            $xdgData = if ($env:XDG_DATA_HOME) { $env:XDG_DATA_HOME } else { Join-Path $HOME '.local/share' }
+            $tmpDir = if ($env:TMPDIR) { $env:TMPDIR } else { '/tmp' }
+            $tokens = [ordered]@{
+                '%HOME%'            = $HOME
+                '%XDG_CACHE_HOME%'  = $xdgCache
+                '%XDG_CONFIG_HOME%' = $xdgConfig
+                '%XDG_DATA_HOME%'   = $xdgData
+                '%TMPDIR%'          = $tmpDir
+            }
+        }
     }
 
     $result = $Pattern
