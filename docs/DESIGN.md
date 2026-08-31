@@ -123,45 +123,55 @@ Agent 不应该看到 `C:\Users\xxx\.cache` 就凭经验猜"这应该是 Hugging
 
 ### 4a. 跨平台 scan backend 抽象
 
-StorOps 通过 `scripts/lib/ScanBackend.psm1` 这一层调度器，把"扫一个目录、拿到它的直属子项大小"这件事和具体用什么工具做完全解耦：
+> **v2 更新**：调度器已从 PowerShell（`scripts/lib/ScanBackend.psm1`）迁移到 Python
+> （`src/storops/platform/base.py`），下面描述的是当前实现；`scripts/lib/ScanBackend.psm1`
+> 及其兄弟模块已随 v2 发布删除，`scripts/*.ps1` 现在是围绕 Python CLI 的薄兼容包装脚本。
+> 详见 §25 及 `docs/plans/storops-v2-cross-platform-refactor.md`。
+
+StorOps 通过 `src/storops/platform/base.py` 里的一组工厂函数（`get_scan_backend()` 等）这一层
+调度器，把"扫一个目录、拿到它的直属子项大小"这件事和具体用什么工具做完全解耦——这是全仓库
+**唯一**做 `sys.platform`/`platform.system()` 判断的地方，`core/` 和 `cli.py` 永远只拿到已经
+选好的 backend 实例：
 
 ```text
-scripts/lib/
-  ScanBackend.psm1          调度器：探测平台 + 可用工具，选中一个 backend
-                            并原样重新导出它的三个标准函数
-  backends/
-    WizTree.psm1            Windows，基于 WizTree CLI（§5）
-    Gdu.psm1                Linux/macOS 首选，基于 gdu（见下）
-    Du.psm1                 Linux/macOS 兜底，基于系统自带 du
+src/storops/platform/
+  base.py                   Protocol 定义（ScanBackend/CapacityProvider/CopyEngine/
+                             LinkEngine）+ 调度器（get_scan_backend() 等工厂函数）
+  posix.py                  Linux/macOS 共用实现（容量/复制/链接机制在两个平台上
+                             完全一致，故合并为一个模块，而非规划文档最初设想的
+                             linux.py + macos.py 两个文件——真实差异只在
+                             core/rules.py 的 token 展开表里，拆两份纯属过度抽象）
+  windows/                  Windows 专属子包（WizTree/robocopy/Junction/ctypes 等
+                             机制与 Linux/macOS 有实质差异，因此单独成包）
+  backends/                 具体扫描后端实现：wiztree.py / gdu.py / du.py
 ```
 
-每个 backend 模块必须实现同一份契约（三个函数，签名和返回形状完全一致）：
+每个 backend 必须实现同一份契约（`ScanBackend` Protocol，方法签名和返回形状完全一致）：
 
-- `Invoke-StorOpsScan -Path -MaxDepth -ExportFolders -ExportFiles -Filter -FilterExclude -Admin`
-  返回一组标准化对象：`FullName, IsFolder, SizeBytes, AllocatedBytes, Modified, FileCount, FolderCount`
-  （`AllocatedBytes` 在 Linux/macOS backend 上目前等于 `SizeBytes` —— ext4/APFS 没有 NTFS MFT
-  那种统一暴露"逻辑大小 vs 实际占用块数"的简单途径，这是一个已知的、可接受的精度取舍）。
-- `Get-StorOpsTopEntries -Path -Top -MaxDepth -Admin -IncludeFiles`（scan.ps1/inspect.ps1 的直接依赖）
-- `Get-StorOpsPathSize -Path -Admin`（cleanup-plan.ps1/migrate-plan.ps1 给单个已知路径称重）
+- `scan()` 返回一组标准化 `Entry` 对象：`full_name, is_folder, size_bytes, allocated_bytes,
+  modified, file_count, folder_count`（`allocated_bytes` 在 Linux/macOS backend 上目前等于
+  `size_bytes` —— ext4/APFS 没有 NTFS MFT 那种统一暴露"逻辑大小 vs 实际占用块数"的简单途径，
+  这是一个已知的、可接受的精度取舍）。
+- `top_entries()`（scan/inspect 的直接依赖）
+- `path_size()`（cleanup-plan/migrate-plan 给单个已知路径称重）
 
-调度逻辑（`Get-StorOpsScanBackendName`）：
+调度逻辑（`get_scan_backend()`）：
 
 ```text
-Windows            -> WizTree
+Windows            -> WizTree（无 WizTree 时 fallback 到原生 os.scandir 遍历）
 Linux/macOS + gdu   -> Gdu
 Linux/macOS 无 gdu  -> Du（打印一次性能提示，但仍然可用）
 ```
 
-所有入口脚本（`scan.ps1`/`inspect.ps1`/`search.ps1`/`cleanup-plan.ps1`/`migrate-plan.ps1`）只导入
-`ScanBackend.psm1`，从不直接导入某个具体 backend —— 这样新增/更换一个平台的 backend 不需要碰任何
-入口脚本。`identify.ps1`/`Identify.psm1`/`Risk.psm1` 完全不感知 backend，只消费上面这组标准化字段。
+`core/` 里的所有编排逻辑（`scan.py`/`cleanup.py`/`migrate.py`）只依赖 `platform` 包导出的工厂
+函数和 Protocol，从不直接 import 某个具体 backend —— 这样新增/更换一个平台的 backend 不需要碰
+任何编排代码。`core/rules.py`/`core/risk.py` 完全不感知 backend，只消费上面这组标准化字段。
 
-回退到 Du 时，`ScanBackend.psm1` 里的 `Write-Warning` 只有直接在终端里跑脚本的人能看到 ——
-agent 能否捕获到 PowerShell 的 warning 流并不确定。所以每个入口脚本的 `-Json` 输出（以及
-`cleanup-plan.ps1`/`migrate-plan.ps1` 落盘的 plan 文件）都额外带了 `Backend`（当前选中的
-backend 名）和 `BackendAdvice`（`Get-StorOpsScanBackendAdvice`：回退到 Du 时是一句建议装 gdu
-的文本，否则是 `null`）两个字段 —— 这是结构化数据，agent 一定读得到，不用赌 stderr 有没有被
-带回来。`SKILL.md` 第 13 条要求 agent 在 `BackendAdvice` 非空时提醒用户一次，而不是每条命令都念叨。
+回退到 Du 时，只打印一条 warning 已知不够可靠——agent 能否捕获到 stderr 并不确定。所以每个
+子命令的 `--json` 输出（以及 cleanup-plan/migrate-plan 落盘的 plan 文件）都额外带了 `Backend`
+（当前选中的 backend 名）和 `BackendAdvice`（回退到 Du 时是一句建议装 gdu 的文本，否则是
+`null`）两个字段 —— 这是结构化数据，agent 一定读得到，不用赌 stderr 有没有被带回来。`SKILL.md`
+第 13 条要求 agent 在 `BackendAdvice` 非空时提醒用户一次，而不是每条命令都念叨。
 
 ### 4b. 为什么是 gdu，而不是直接用 du
 
@@ -546,6 +556,26 @@ C:\... → 87 GB → LM Studio → AI model storage → migratable → E:\AI\LMS
 ```
 
 第一阶段重点不是"做更多功能"，而是把这条 Agent workflow 做正确：优先复用 WizTree，把开发精力放在**识别、智能判断、迁移规划、安全执行和验证**上。
+
+---
+
+## 25. v2：Python / 跨平台重构
+
+从某个版本起，StorOps 的实现语言从 PowerShell 迁移到了 Python（`src/storops/`），并获得了一个
+统一的 `storops` CLI（`storops scan/inspect/search/identify/cleanup/migrate/verify`）取代原先
+9 个互相独立的 `.ps1` 入口。这次重构的完整审计、架构方案、决策记录（依赖策略、兼容策略、
+Linux/macOS 规则补齐方案等）都记录在
+[`docs/plans/storops-v2-cross-platform-refactor.md`](plans/storops-v2-cross-platform-refactor.md)——
+本文档不重复那些细节，只记两条对理解现状最关键的结论：
+
+1. **本文档描述的产品设计/安全模型/能力边界本身没有变**（三层安全模型、
+   `Assert-not-critical` 兜底、未识别路径默认拒绝、迁移的 copy-verify-remove-relink 状态机等，
+   §3/§8-§12 全部原样保留，只是实现语言换了）；本节之前各处提到具体 PowerShell 模块
+   （`Identify.psm1`/`Risk.psm1`/`ScanBackend.psm1` 等）的地方，应理解为对应逻辑现在位于
+   `src/storops/core/`、`src/storops/platform/` 下的同名 Python 模块（§4a 已更新为反映这一点）。
+2. **`scripts/*.ps1` 依然可用**，且这次是与 v2 同版本一起发布的强制交付项，不是"以后再兼容"——
+   它们现在是薄包装脚本，把参数翻译成 `storops` CLI flag 后转调 `python -m storops`，参数名/
+   默认值/`-Json` 输出字段名与重写前逐一比对一致。详见该规划文档 §2.10。
 
 ---
 

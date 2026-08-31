@@ -2,8 +2,10 @@
 <#
 .SYNOPSIS
     Read-only: scan a drive or directory and report its largest immediate
-    consumers, identified where possible. The usual first step when
-    answering "why is this drive full?" (docs/DESIGN.md §6.1, §21 scenario 1).
+    consumers, identified where possible. Compatibility wrapper around
+    `python -m storops scan` -- same parameters as before, business logic
+    now lives in src/storops/ (docs/plans/storops-v2-cross-platform-
+    refactor.md §2.10). Requires Python 3.11+ on PATH.
 
 .EXAMPLE
     pwsh scripts/scan.ps1 -Path C:\
@@ -18,77 +20,20 @@
 param(
     [Parameter(Position = 0)]
     [string]$Path = $(if ($env:OS -eq 'Windows_NT') { 'C:\' } else { '/' }),
-
-    # How many of the largest immediate entries to report.
     [int]$Top = 15,
-
-    # Also list top-level loose files directly under Path, not just folders.
     [switch]$IncludeFiles,
-
-    # Windows only: ask WizTree to read the NTFS MFT directly (faster/more
-    # complete, but self-elevates via UAC). No effect on Linux/macOS -- see
-    # docs/DESIGN.md §4a; StorOps never self-elevates there.
     [switch]$Admin,
-
-    # Emit structured JSON instead of a formatted table.
     [switch]$Json
 )
 
 $ErrorActionPreference = 'Stop'
-$libRoot = Join-Path $PSScriptRoot 'lib'
-Import-Module (Join-Path $libRoot 'Common.psm1') -Force
-Import-Module (Join-Path $libRoot 'ScanBackend.psm1') -Force
-Import-Module (Join-Path $libRoot 'Identify.psm1') -Force
-Import-Module (Join-Path $libRoot 'Risk.psm1') -Force
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Import-Module (Join-Path $PSScriptRoot 'lib/PythonBridge.psm1') -Force
 
-$normalized = Resolve-StorOpsPath -Path $Path
+$cliArgs = @('scan', $Path, '--top', "$Top")
+if ($IncludeFiles) { $cliArgs += '--include-files' }
+if ($Admin) { $cliArgs += '--admin' }
+if ($Json) { $cliArgs += '--json' }
 
-$capacity = $null
-try { $capacity = Get-StorOpsFreeSpaceInfo -Path $normalized }
-catch { Write-Warning "Could not read drive/filesystem capacity for '$normalized': $_" }
-
-Write-Verbose "StorOps: scanning '$normalized' (top $Top, depth 1, includeFiles=$($IncludeFiles.IsPresent))"
-$entries = Get-StorOpsTopEntries -Path $normalized -Top $Top -MaxDepth 1 -Admin:$Admin -IncludeFiles:$IncludeFiles
-
-$rows = foreach ($entry in $entries) {
-    $identity = Get-StorOpsPathIdentity -Path $entry.FullName
-    [PSCustomObject]@{
-        Path        = $entry.FullName
-        IsFolder    = $entry.IsFolder
-        SizeBytes   = $entry.SizeBytes
-        Application = $identity.Application
-        Category    = $identity.Category
-        Confidence  = $identity.Confidence
-        CleanupRisk = $identity.CleanupRisk
-    }
-}
-
-if ($Json) {
-    [PSCustomObject]@{
-        ScannedPath   = $normalized
-        Drive         = $capacity
-        Entries       = $rows
-        Backend       = Get-StorOpsScanBackendName
-        BackendAdvice = Get-StorOpsScanBackendAdvice
-    } | ConvertTo-Json -Depth 6
-    return
-}
-
-if ($capacity) {
-    Write-Host ("{0}  Total: {1}  Used: {2}  Free: {3}" -f `
-        $capacity.Drive, (Format-StorOpsSize $capacity.TotalBytes), `
-        (Format-StorOpsSize $capacity.UsedBytes), (Format-StorOpsSize $capacity.FreeBytes)) -ForegroundColor Cyan
-    Write-Host ''
-}
-
-Write-Host "Top $($rows.Count) consumers under ${normalized}:"
-foreach ($row in $rows) {
-    $label = if ($row.Application) { $row.Application } else { '(unidentified)' }
-    $riskTag = if ($row.CleanupRisk -in @('high', 'critical')) { " [$($row.CleanupRisk)]" } else { '' }
-    "{0,10}  {1,-22}{2,-12}{3}" -f (Format-StorOpsSize $row.SizeBytes), $label, $riskTag, $row.Path | Write-Host
-}
-
-if (-not $IncludeFiles) {
-    Write-Host ''
-    Write-Host "(Folders only. Pass -IncludeFiles to also list top-level loose files, or run inspect.ps1 on a specific large folder to drill down.)" -ForegroundColor DarkGray
-}
+Invoke-StorOpsCli -RepoRoot $repoRoot -CliArgs $cliArgs
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

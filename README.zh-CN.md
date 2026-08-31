@@ -38,8 +38,13 @@ Windows token;只有关键系统路径规则(`rules/windows.yaml`/`linux.yaml`/
 
 ## 环境要求
 
+- **Python 3.11+**——现在是主要实现所在(`src/storops/`);`python3`/`python`
+  需要在 `PATH` 上。最常见的"克隆进 skills 目录"安装方式不需要
+  `pip install`(详见下方[安装](#安装))——从 checkout 目录直接运行
+  `python -m storops` 即可。
 - Windows 上用 PowerShell 5.1+(Windows PowerShell),Linux/macOS 上用
-  PowerShell 7+。
+  PowerShell 7+,**仅在你使用 `scripts/*.ps1` 兼容包装脚本时才需要**
+  (见下方[两种调用方式](#两种调用方式))——Python CLI 本身不依赖 PowerShell。
 - **Windows**:NTFS 卷,加上已安装的 [WizTree](https://diskanalyzer.com/)
   (`WizTree64.exe` 需在 `PATH` 中、位于标准安装目录,或通过
   `$env:STOROPS_WIZTREE_PATH` 指定路径)。管理员权限可选但推荐:WizTree 的
@@ -54,9 +59,10 @@ Windows token;只有关键系统路径规则(`rules/windows.yaml`/`linux.yaml`/
 
 StorOps 是一个标准的 agent skill:一个根目录带有 `SKILL.md` 的目录,agent 依据
 其 name/description 自动发现并调用,而非以 slash command 的形式手动触发。无需
-构建步骤,也无需安装依赖——agent 会读取 `SKILL.md` 来判断何时使用该 skill,
-然后直接调用 `scripts/` 下的 PowerShell 脚本。运行时依赖(Windows 上是
-WizTree,Linux/macOS 上是 gdu/du)详见上方[环境要求](#环境要求)。
+构建步骤,也无需 `pip install`——agent 会读取 `SKILL.md` 来判断何时使用该
+skill,然后直接调用 `python -m storops <verb>` 或 `scripts/*.ps1` 包装脚本
+(见下方[两种调用方式](#两种调用方式))。运行时依赖是 Python 3.11+,以及在
+Windows 上的 WizTree,详见上方[环境要求](#环境要求)。
 
 ### 直接让 Agent 帮你安装(推荐)
 
@@ -111,19 +117,47 @@ git clone https://github.com/tzzs/storops.git .claude/skills/storops
 git clone https://github.com/tzzs/storops.git ~/.claude/skills/storops
 ```
 
+## 两种调用方式
+
+StorOps 现在用 Python 实现(`src/storops/`),对外暴露为一个统一 CLI、每个能力
+一个子命令——这是主要的、推荐的调用方式:
+
+```bash
+python -m storops scan /home/me --json
+# 如果已经 pip install 过这个包,也可以直接: storops scan /home/me --json
+```
+
+原来的 `scripts/*.ps1` 入口**保持不变、照常可用**——脚本名、参数名、默认值、
+`-Json` 输出字段名全部一致。它们现在是薄包装脚本,把自己的参数翻译成 `storops`
+CLI 的 flag,再调用 `python -m storops`;调用方式本身没有任何变化:
+
+```powershell
+pwsh scripts/scan.ps1 -Path C:\ -Json
+```
+
+两种形式都被完整支持,产出等价的结果——原因见
+[`docs/plans/storops-v2-cross-platform-refactor.md`](docs/plans/storops-v2-cross-platform-refactor.md)
+§2.10(本次发布即 100% 向后兼容,不设过渡期)。用哪种都可以,遵循 `SKILL.md`
+的 agent 两种都能用。
+
 ## 目录结构
 
 ```text
 SKILL.md            agent 行为契约(何时/如何使用该 skill)
 docs/DESIGN.md       完整设计文档(意图与范围的唯一事实来源)
+docs/plans/          详细的设计/审计记录,例如 v2 Python/跨平台重构方案
 rules/               声明式的识别与风险规则(YAML),按平台拆分的关键路径
                      文件 + 共享的应用/缓存规则
-scripts/             PowerShell 入口脚本,每个能力对应一个
-scripts/lib/         共享 PowerShell 模块(规则匹配、风险分级、
-                     plan/verification 辅助逻辑)
-scripts/lib/ScanBackend.psm1   选择当前平台的 scan backend(docs/DESIGN.md §4a)
-scripts/lib/backends/         WizTree.psm1(Windows)、Gdu.psm1 + Du.psm1(Linux/macOS)
-tests/               规则引擎与 CSV 解析的冒烟测试
+src/storops/         Python 实现:CLI(cli.py)、核心业务逻辑(core/)、
+                     平台抽象层(platform/)、输出渲染(output/)——完整目录树
+                     见 docs/plans/storops-v2-cross-platform-refactor.md §2.2
+scripts/             PowerShell 入口脚本,每个能力对应一个——现在是围绕
+                     `python -m storops` 的薄兼容包装脚本
+scripts/lib/         仅供 scripts/*.ps1 包装脚本使用的辅助逻辑(解析 Python
+                     解释器 + 调用 CLI);不再承载任何业务逻辑
+tests/               针对 Python 实现的 pytest 套件(tests/unit、
+                     tests/integration),以及 tests/smoke.ps1(针对
+                     .ps1 包装脚本本身的薄冒烟测试)
 ```
 
 ## 安全模型
@@ -144,7 +178,10 @@ tests/               规则引擎与 CSV 解析的冒烟测试
 
 一个遵循 `SKILL.md` 的 agent 通常会这样操作(下面示例用的是 Windows 路径;
 在 Linux/macOS 上换成 POSIX 路径即可,例如 `-Path /`、`-Path ~/.cache`——
-`scan.ps1`/`search.ps1` 在那两个平台上会自动默认 `/`):
+`scan.ps1`/`search.ps1` 在那两个平台上会自动默认 `/`)。这里展示的是
+`scripts/*.ps1` 包装脚本;等价的 `python -m storops` 形式效果完全一样
+(见上方[两种调用方式](#两种调用方式))——例如第 1 步也可以写成
+`python -m storops scan C:\`:
 
 ```powershell
 # 1. 只读:先看全局概况
