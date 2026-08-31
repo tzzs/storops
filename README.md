@@ -1,5 +1,7 @@
 # StorOps
 
+**English** | [简体中文](README.zh-CN.md)
+
 **Storage Operations for AI Agents.**
 
 > See where your storage goes. Understand why. Move what matters. Clean what doesn't.
@@ -36,6 +38,69 @@ calls `WizTree64.exe` from the command line and parses its CSV export.
 - Admin privileges are optional but recommended: WizTree's `/admin=1` mode
   reads the NTFS MFT directly and is dramatically faster/more complete than a
   standard scan.
+
+## Installation
+
+StorOps is a plain agent skill: a directory with a `SKILL.md` at its root,
+discovered by name and description rather than invoked as a slash command. No
+build step and no dependencies to install — the agent reads `SKILL.md` to
+decide when to use the skill, then invokes the PowerShell scripts under
+`scripts/` directly. The only runtime requirement is WizTree, see
+[Requirements](#requirements) above.
+
+### Ask your agent to install it (recommended)
+
+Paste this into any AI coding agent chat (Claude Code, Codex, Cursor, etc.)
+and let it figure out the right method for your setup:
+
+```text
+Install the "storops" agent skill from https://github.com/tzzs/storops
+using whichever method fits the agent I'm running in, then confirm it
+loaded.
+```
+
+### Any skill-aware agent — `npx skills add`
+
+[`skills`](https://www.npmjs.com/package/skills) is a community CLI that
+installs a `SKILL.md` from any public GitHub repo into an agent's skills
+directory (`.claude/skills/`, `.agents/skills/`, etc.):
+
+```bash
+npx skills add tzzs/storops
+# or, to install for every project on this machine:
+npx skills add tzzs/storops -g
+```
+
+### Claude Code — plugin marketplace
+
+The repo carries its own `.claude-plugin/marketplace.json`, so it can be added
+as a marketplace and installed directly from inside Claude Code:
+
+```text
+/plugin marketplace add tzzs/storops
+/plugin install storops@storops
+```
+
+### Codex — skill installer
+
+Codex ships an official `skill-installer` skill that installs any skill from a
+GitHub URL. From inside Codex:
+
+```text
+$skill-installer install https://github.com/tzzs/storops
+```
+
+### Manual
+
+Clone it directly into a skills directory the agent scans:
+
+```bash
+# Project-level (this checkout only)
+git clone https://github.com/tzzs/storops.git .claude/skills/storops
+
+# Personal (all projects)
+git clone https://github.com/tzzs/storops.git ~/.claude/skills/storops
+```
 
 ## Layout
 

@@ -1,0 +1,13 @@
+{
+  "name": "storops",
+  "owner": {
+    "name": "tzzs"
+  },
+  "plugins": [
+    {
+      "name": "storops",
+      "source": "./",
+      "description": "Storage Operations for AI Agents -- safely diagnose, clean up, and migrate Windows storage."
+    }
+  ]
+}
