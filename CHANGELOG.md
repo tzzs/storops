@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.3](https://github.com/tzzs/storops/compare/storops-v1.0.2...storops-v1.0.3) (2026-09-01)
+
+
+### Bug Fixes
+
+* **ci:** also exclude the bare directory entries from the skill zip ([1729791](https://github.com/tzzs/storops/commit/172979140a277ba32de5db7e686cd4e0cc6b4b14))
+* **ci:** package a curated zip for SkillHub, use --version override ([471e3e8](https://github.com/tzzs/storops/commit/471e3e847796dcb2bc9f26610dbf9412c556b496))
+
 ## [1.0.2](https://github.com/tzzs/storops/compare/storops-v1.0.1...storops-v1.0.2) (2026-09-01)
 
 
