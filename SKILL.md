@@ -4,7 +4,7 @@ description: 'Storage Operations for AI Agents. Cross-platform (Windows, Linux, 
 slug: storops
 displayName: StorOps
 # x-release-please-start-version
-version: 1.0.3
+version: 1.0.4
 # x-release-please-end
 summary: '面向 AI Agent 的存储运维能力：跨平台（Windows / Linux / macOS）诊断磁盘空间占用、安全清理与迁移，写入前必须确认，迁移后自动验证。'
 license: MIT
