@@ -89,7 +89,8 @@ jobs:
       - name: Package skill content
         run: |
           zip -rq /tmp/storops-skill.zip . \
-            -x '.git/**' -x '.github/**' -x '.claude-plugin/**' -x 'tests/**' \
+            -x '.git' -x '.git/**' -x '.github' -x '.github/**' \
+            -x '.claude-plugin' -x '.claude-plugin/**' -x 'tests' -x 'tests/**' \
             -x '.gitignore' -x '.release-please-manifest.json' -x 'release-please-config.json'
           echo "Packaged files:"
           unzip -l /tmp/storops-skill.zip
