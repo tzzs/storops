@@ -75,7 +75,15 @@ class TestDuBackendIntegration:
         entry = backend.path_size(str(root / "b.txt"))
         assert entry is not None
         assert entry.full_name == str(root / "b.txt")
-        assert entry.size_bytes == 500
+        if backend._du_flavor() == "gnu":
+            assert entry.size_bytes == 500
+        else:
+            # BSD du has no apparent-size flag: -k reports disk usage
+            # rounded up to the filesystem's allocation block size (e.g.
+            # 4096 on APFS), not the literal byte count -- a documented
+            # approximation on this flavor (see du.py's BSD branch).
+            assert entry.size_bytes >= 500
+            assert entry.size_bytes % 1024 == 0
 
     def test_path_size_returns_none_for_missing_path(self, tmp_path):
         backend = DuBackend()
