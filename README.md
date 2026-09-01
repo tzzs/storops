@@ -9,8 +9,9 @@
 > See where your storage goes. Understand why. Move what matters. Clean what doesn't.
 
 StorOps is an agent skill (`storops`) that lets AI coding agents — Claude Code,
-Codex, OpenCode, etc. — safely understand and manage local storage (Windows
-today; Linux/macOS support is newer — see [Status](#status) below).
+Codex, OpenCode, etc. — safely understand and manage local storage across
+Windows, Linux, and macOS (see [Status](#status) below for per-platform
+maturity notes).
 
 It is **not** another disk analyzer and **not** another disk cleaner. WizTree
 already answers "what is taking up space." StorOps answers the questions after

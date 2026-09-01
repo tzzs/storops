@@ -1,0 +1,59 @@
+name: skillhub-publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry-run only (skillhub publish --dry-run) -- skip the real publish"
+        type: boolean
+        default: true
+      changelog:
+        description: "Changelog message for a manual publish (ignored when dry_run is true)"
+        type: string
+        default: "Manual re-publish"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SkillHub CLI
+        run: curl -fsSL https://skillhub.cn/install/install.sh | bash -s -- --cli-only
+
+      - name: Add SkillHub CLI to PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify installation
+        run: skillhub --version
+
+      - name: Log in to SkillHub
+        run: skillhub login --key "${{ secrets.SKILLHUB_API_KEY }}" --host https://api.skillhub.cn
+
+      - name: Confirm identity
+        run: skillhub auth whoami
+
+      - name: Sync SKILL.md version with the release manifest
+        if: github.event_name == 'release'
+        run: |
+          version="$(jq -r '.["."]' .release-please-manifest.json)"
+          sed -i "s/^version: .*/version: ${version}/" SKILL.md
+          grep -qx "version: ${version}" SKILL.md || { echo "::error::SKILL.md version was not updated to ${version}"; exit 1; }
+
+      - name: Dry-run publish (format check)
+        run: skillhub publish . --dry-run
+
+      - name: Publish to SkillHub
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        env:
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          MANUAL_CHANGELOG: ${{ inputs.changelog }}
+        run: |
+          changelog="${RELEASE_NAME:-${RELEASE_TAG:-$MANUAL_CHANGELOG}}"
+          skillhub publish . --changelog "$changelog"

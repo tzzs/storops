@@ -7,7 +7,7 @@
     {
       "name": "storops",
       "source": "./",
-      "description": "Storage Operations for AI Agents -- safely diagnose, clean up, and migrate Windows storage."
+      "description": "Storage Operations for AI Agents -- safely diagnose, clean up, and migrate storage across Windows, Linux, and macOS."
     }
   ]
 }
