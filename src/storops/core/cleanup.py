@@ -54,7 +54,11 @@ def plan(max_risk: str = "low", *, out_file: str | None = None, admin: bool = Fa
             probe = _probe_path(pattern)
             if not probe:
                 continue
-            probes.setdefault(probe, rule)
+            # Normalize before deduping: different patterns (e.g. "%TEMP%\*"
+            # vs "%USERPROFILE%\AppData\Local\Temp\*") can expand to the same
+            # directory but as differently-separated raw strings, which
+            # double-counted it when keyed on the raw expansion.
+            probes.setdefault(resolve_path(probe), rule)
 
     items: list[CleanupItem] = []
     for probe_path, rule in probes.items():
