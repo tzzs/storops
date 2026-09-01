@@ -108,6 +108,44 @@ class TestWindowsNativeBackendScan:
         # The readable sibling file is still reported.
         assert any(e.full_name == str(root / "ok.txt") for e in entries)
 
+    def test_corrupt_mtime_collected_as_warning_not_raised(self, tmp_path, monkeypatch):
+        root = tmp_path / "root"
+        root.mkdir()
+        bad = root / "bad.bin"
+        bad.write_bytes(b"x")
+        (root / "ok.txt").write_bytes(b"y")
+        # A distinctive, exactly-representable mtime (epoch 0) so the fake
+        # below can single out this one file's timestamp without touching
+        # its sibling's real (current-time) mtime.
+        scan_mod.os.utime(bad, (0, 0))
+
+        real_datetime = scan_mod.datetime
+
+        class _FakeDatetime:
+            @staticmethod
+            def fromtimestamp(ts, *args, **kwargs):
+                if ts == 0:
+                    raise OSError("Invalid argument")
+                return real_datetime.fromtimestamp(ts, *args, **kwargs)
+
+        monkeypatch.setattr(scan_mod, "datetime", _FakeDatetime)
+
+        backend = WindowsNativeBackend()
+        # Must not raise -- a single file with a corrupt/out-of-range mtime
+        # cannot abort the whole walk (same principle as the permission-error
+        # case above).
+        entries = backend.scan(str(root), export_folders=True, export_files=True)
+
+        warnings = backend.take_warnings()
+        assert len(warnings) == 1
+        assert warnings[0].code == "scan_error"
+        assert warnings[0].path == str(bad)
+
+        by_name = {e.full_name: e for e in entries}
+        assert by_name[str(bad)].modified is None
+        # The sibling file with a normal mtime is unaffected.
+        assert by_name[str(root / "ok.txt")].modified is not None
+
     def test_take_warnings_resets_between_calls(self, tmp_path, monkeypatch):
         root = tmp_path / "root"
         locked = root / "locked"

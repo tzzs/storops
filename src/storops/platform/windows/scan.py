@@ -168,8 +168,12 @@ def _walk(
             total_size += st.st_size
             allocated = _allocated_bytes(st)
             total_allocated += allocated
-            mtime = datetime.fromtimestamp(st.st_mtime)
-            if latest_mtime is None or mtime > latest_mtime:
+            try:
+                mtime = datetime.fromtimestamp(st.st_mtime)
+            except (OSError, OverflowError, ValueError) as exc:
+                warnings.append(ScanWarning(path=child.path, code="scan_error", message=str(exc)))
+                mtime = None
+            if mtime is not None and (latest_mtime is None or mtime > latest_mtime):
                 latest_mtime = mtime
             if within_depth and export_files and _name_matches(child.name, name_filter, name_exclude):
                 out.append(
