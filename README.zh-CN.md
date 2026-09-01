@@ -1,6 +1,7 @@
 # StorOps
 
 [![skills.sh](https://skills.sh/b/tzzs/storops)](https://skills.sh/tzzs/storops)
+[![CI](https://github.com/tzzs/storops/actions/workflows/test.yml/badge.svg)](https://github.com/tzzs/storops/actions/workflows/test.yml)
 
 [English](README.md) | **简体中文**
 
@@ -9,8 +10,8 @@
 > 看清空间去了哪里,理解为什么,把重要的东西挪走,把没用的东西清掉。
 
 StorOps 是一个 agent skill(`storops`),让 Claude Code、Codex、OpenCode 等
-AI coding agent 能够安全地理解并管理本地存储空间(目前 Windows 支持最成熟;
-Linux/macOS 支持是新加的,详见下方[当前状态](#当前状态))。
+AI coding agent 能够安全地理解并管理 Windows、Linux、macOS 上的本地存储空间
+(各平台的成熟度差异详见下方[当前状态](#当前状态))。
 
 它**不是**又一个磁盘分析器,也**不是**又一个磁盘清理工具。WizTree 已经能回答
 "什么占用了空间"这个问题;StorOps 回答的是后续的问题:*这是什么、为什么在这里、
