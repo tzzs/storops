@@ -123,6 +123,11 @@ jobs:
           echo "::error::timed out waiting for the test workflow to finish on commit $sha -- refusing to publish"
           exit 1
 
+      - name: DEBUG -- inspect publish CLI options
+        run: |
+          skillhub publish --help
+          skillhub --help
+
       - name: Dry-run publish (format check)
         run: skillhub publish . --dry-run
 
