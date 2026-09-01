@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   publish:
@@ -47,6 +48,32 @@ jobs:
 
       - name: Dry-run publish (format check)
         run: skillhub publish . --dry-run
+
+      - name: Require a green test run on this commit before publishing
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="${{ github.sha }}"
+          repo="${{ github.repository }}"
+          echo "Waiting for the 'test' workflow's result on commit $sha..."
+          for i in $(seq 1 40); do
+            conclusion="$(gh api "repos/$repo/actions/workflows/test.yml/runs?head_sha=$sha" \
+              --jq '[.workflow_runs[]] | sort_by(.run_started_at) | last | .conclusion // "pending"')"
+            if [ "$conclusion" = "pending" ] || [ "$conclusion" = "null" ] || [ -z "$conclusion" ]; then
+              echo "  ($i/40) not finished yet, waiting 15s..."
+              sleep 15
+              continue
+            fi
+            echo "test workflow conclusion: $conclusion"
+            if [ "$conclusion" != "success" ]; then
+              echo "::error::test workflow did not succeed on commit $sha (conclusion: $conclusion) -- refusing to publish"
+              exit 1
+            fi
+            exit 0
+          done
+          echo "::error::timed out waiting for the test workflow to finish on commit $sha -- refusing to publish"
+          exit 1
 
       - name: Publish to SkillHub
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
