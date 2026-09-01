@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.1](https://github.com/tzzs/storops/compare/storops-v1.0.0...storops-v1.0.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* **ci:** gate SkillHub publish on the test workflow, drop dead trigger ([8547df2](https://github.com/tzzs/storops/commit/8547df2af7668493aae063439c8bcb88cb7a5c6f))
+* **ci:** trigger SkillHub publish via workflow_run, not release ([60b8f5c](https://github.com/tzzs/storops/commit/60b8f5c7aa1d2c63b58e71b13a5229b608aaf8c1))
+* **release:** let release-please own SKILL.md's version ([009c5d1](https://github.com/tzzs/storops/commit/009c5d12d11d1cd531b6e8d1b04df309eec6160f))
+
 ## [1.0.0](https://github.com/tzzs/storops/compare/storops-v0.2.0...storops-v1.0.0) (2026-09-01)
 
 
