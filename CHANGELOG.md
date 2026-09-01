@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/tzzs/storops/compare/storops-v1.0.1...storops-v1.0.2) (2026-09-01)
+
+
+### Bug Fixes
+
+* **skill:** switch version annotation to block form ([7ecb45b](https://github.com/tzzs/storops/commit/7ecb45b26291dbff27906d972c6aa47b73d34370))
+
 ## [1.0.1](https://github.com/tzzs/storops/compare/storops-v1.0.0...storops-v1.0.1) (2026-09-01)
 
 
