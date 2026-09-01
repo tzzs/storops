@@ -6,6 +6,7 @@ ships with.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 
 from storops import platform as platform_pkg
@@ -56,7 +57,12 @@ def test_scan_orders_by_size_and_reports_backend(monkeypatch):
     monkeypatch.setattr(platform_pkg, "get_capacity_provider", lambda: FakeCapacityProvider())
 
     result = scan.scan("/x", top=2)
-    assert result.scanned_path == "/x"
+    # scan.scan() runs the path through resolve_path() (os.path.abspath),
+    # which -- correctly -- resolves a bare "/x" against the current drive
+    # on Windows (e.g. "D:\\x") rather than leaving it POSIX-relative, so
+    # the expectation must go through the same call rather than hardcoding
+    # the POSIX literal.
+    assert result.scanned_path == os.path.abspath("/x")
     assert [e.size_bytes for e in result.entries] == [300, 100]
     assert result.backend == "Fake"
     assert result.backend_advice == "install gdu"

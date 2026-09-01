@@ -194,6 +194,7 @@ def _platform_tokens() -> dict[str, str | None]:
 
     if system == "Windows":
         return {
+            "%HOME%": home,
             "%USERPROFILE%": os.environ.get("USERPROFILE"),
             "%LOCALAPPDATA%": os.environ.get("LOCALAPPDATA"),
             "%APPDATA%": os.environ.get("APPDATA"),

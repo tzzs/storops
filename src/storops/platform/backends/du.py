@@ -69,11 +69,10 @@ class DuBackend:
             raise InvalidPathError(f"StorOps: '{target}' does not exist.")
 
         flavor = self._du_flavor()
-        args: list[str] = ["du", "-a"]
         if flavor == "gnu":
             # -b = --apparent-size --block-size=1: logical/apparent size in
             # bytes, comparable to WizTree's "Size" column (not its "Allocated").
-            args.append("-b")
+            args: list[str] = ["du", "-a", "-b"]
             if max_depth > 0:
                 args.append(f"--max-depth={max_depth}")
         else:
@@ -81,9 +80,19 @@ class DuBackend:
             # report 1024-byte blocks (-k) and scale below. This is
             # disk-usage, not apparent size, on this flavor -- a known,
             # documented approximation.
-            args.append("-k")
+            #
+            # BSD du's -a, -s, and -d depth are mutually exclusive
+            # (`usage: du [-a | -s | -d depth]`) -- combining -a with -d
+            # always fails with a usage error (exit 64), which used to be
+            # misreported below as "permission denied". -d depth alone
+            # already reports an entry for every file *and* directory down
+            # to that depth, so it fully substitutes for -a whenever a
+            # depth limit is requested.
+            args = ["du", "-k"]
             if max_depth > 0:
                 args.extend(["-d", str(max_depth)])
+            else:
+                args.append("-a")
         args.extend(["--", target])
 
         # stderr is discarded, matching Du.psm1's `2>$null`: a
