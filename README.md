@@ -1,6 +1,7 @@
 # StorOps
 
 [![skills.sh](https://skills.sh/b/tzzs/storops)](https://skills.sh/tzzs/storops)
+[![CI](https://github.com/tzzs/storops/actions/workflows/test.yml/badge.svg)](https://github.com/tzzs/storops/actions/workflows/test.yml)
 
 **English** | [简体中文](README.zh-CN.md)
 
