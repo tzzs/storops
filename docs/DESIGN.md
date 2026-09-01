@@ -2,7 +2,7 @@
 
 > Design source of truth. This document is the original product/design brief for
 > StorOps and should be kept in sync as the design evolves. Implementation lives
-> under `rules/`, `scripts/`, and `SKILL.md` at the repo root.
+> under `rules/`, `src/storops/`, and `SKILL.md` at the repo root.
 
 ## 1. 项目目标
 
@@ -125,8 +125,9 @@ Agent 不应该看到 `C:\Users\xxx\.cache` 就凭经验猜"这应该是 Hugging
 
 > **v2 更新**：调度器已从 PowerShell（`scripts/lib/ScanBackend.psm1`）迁移到 Python
 > （`src/storops/platform/base.py`），下面描述的是当前实现；`scripts/lib/ScanBackend.psm1`
-> 及其兄弟模块已随 v2 发布删除，`scripts/*.ps1` 现在是围绕 Python CLI 的薄兼容包装脚本。
-> 详见 §25 及 `docs/plans/storops-v2-cross-platform-refactor.md`。
+> 及其兄弟模块已随 v2 发布删除。`scripts/*.ps1` 兼容包装脚本本身也已在之后的版本里整体
+> 移除——`storops` CLI（`python -m storops ...`）现在是唯一的调用方式。详见 §25 及
+> `docs/plans/storops-v2-cross-platform-refactor.md`。
 
 StorOps 通过 `src/storops/platform/base.py` 里的一组工厂函数（`get_scan_backend()` 等）这一层
 调度器，把"扫一个目录、拿到它的直属子项大小"这件事和具体用什么工具做完全解耦——这是全仓库
@@ -365,6 +366,10 @@ Skill 应该尽量让 Agent **主动使用 StorOps**，而不是让用户必须�
 
 ## 17. 项目结构（MVP 简化版）
 
+> 这是 v1（PowerShell）时代的原始结构，作为历史记录保留。v2 之后的当前目录结构见 §25
+> 及 `docs/plans/storops-v2-cross-platform-refactor.md` §2.2——`scripts/` 目录（含其兼容
+> 包装脚本）已不存在，实现全部在 `src/storops/` 下。
+
 ```text
 storops/ (repo root)
 ├── SKILL.md
@@ -573,13 +578,14 @@ Linux/macOS 规则补齐方案等）都记录在
    §3/§8-§12 全部原样保留，只是实现语言换了）；本节之前各处提到具体 PowerShell 模块
    （`Identify.psm1`/`Risk.psm1`/`ScanBackend.psm1` 等）的地方，应理解为对应逻辑现在位于
    `src/storops/core/`、`src/storops/platform/` 下的同名 Python 模块（§4a 已更新为反映这一点）。
-2. **`scripts/*.ps1` 依然可用**，且这次是与 v2 同版本一起发布的强制交付项，不是"以后再兼容"——
-   它们现在是薄包装脚本，把参数翻译成 `storops` CLI flag 后转调 `python -m storops`，参数名/
-   默认值/`-Json` 输出字段名与重写前逐一比对一致。详见该规划文档 §2.10。
+2. **`scripts/*.ps1` 曾经在 v2 发布时作为强制交付项与新 CLI 同版本一起提供**（薄包装脚本，把
+   参数翻译成 `storops` CLI flag 后转调 `python -m storops`），但按规划文档 §2.10 里"存在到用户
+   明确决定不再需要为止"的约定，兼容包装层已在之后被整体移除——`storops` CLI（`python -m
+   storops ...`）现在是唯一的调用方式。详见该规划文档 §2.10。
 
 ---
 
-## 附：WizTree CLI 参考（用于实现 `scripts/lib/WizTree.psm1`）
+## 附：WizTree CLI 参考（用于实现 `src/storops/platform/backends/wiztree.py`）
 
 可执行文件：`WizTree64.exe`（或 `WizTree.exe`，32 位）。命令行导出用法：
 

@@ -42,15 +42,10 @@ coverage.
 
 ## Requirements
 
-- **Python 3.11+** — this is the primary implementation now (`src/storops/`);
-  `python3`/`python` needs to be on `PATH`. No `pip install` is required for
-  the common "cloned into a skills directory" install path (see
-  [Installation](#installation) below) — `python -m storops` works straight
-  out of the checkout.
-- PowerShell 5.1+ (Windows PowerShell) on Windows, or PowerShell 7+ on
-  Linux/macOS, **only if you use the `scripts/*.ps1` compatibility wrappers**
-  (see [Two ways to call it](#two-ways-to-call-it) below) — the Python CLI
-  itself has no PowerShell dependency.
+- **Python 3.11+** — the only implementation (`src/storops/`); `python3`/
+  `python` needs to be on `PATH`. No `pip install` is required for the
+  common "cloned into a skills directory" install path — `python -m storops`
+  works straight out of the checkout.
 - **Windows**: NTFS volumes, plus [WizTree](https://diskanalyzer.com/)
   installed (`WizTree64.exe` on `PATH`, in a standard install location, or
   pointed to via `$env:STOROPS_WIZTREE_PATH`). Admin privileges are optional
@@ -68,11 +63,9 @@ coverage.
 StorOps is a plain agent skill: a directory with a `SKILL.md` at its root,
 discovered by name and description rather than invoked as a slash command. No
 build step and no `pip install` required — the agent reads `SKILL.md` to
-decide when to use the skill, then invokes either `python -m storops <verb>`
-or the `scripts/*.ps1` wrappers directly (see
-[Two ways to call it](#two-ways-to-call-it) below). The only runtime
-requirements are Python 3.11+ and, on Windows, WizTree — see
-[Requirements](#requirements) above.
+decide when to use the skill, then invokes `python -m storops <verb>`
+directly. The only runtime requirements are Python 3.11+ and, on Windows,
+WizTree — see [Requirements](#requirements) above.
 
 ### Ask your agent to install it (recommended)
 
@@ -128,32 +121,25 @@ git clone https://github.com/tzzs/storops.git .claude/skills/storops
 git clone https://github.com/tzzs/storops.git ~/.claude/skills/storops
 ```
 
-## Two ways to call it
+## Calling it
 
-StorOps is now implemented in Python (`src/storops/`), exposed as a single
-unified CLI with one subcommand per capability — this is the primary,
-recommended calling convention:
+StorOps is implemented in Python (`src/storops/`), exposed as a single
+unified CLI with one subcommand per capability:
 
 ```bash
 python -m storops scan /home/me --json
 # or, if the package has been `pip install`-ed: storops scan /home/me --json
 ```
 
-The original `scripts/*.ps1` entry points **still work, unchanged** — same
-script names, same parameter names, same defaults, same `-Json` output field
-names. They are now thin compatibility wrappers that translate their
-parameters into `storops` CLI flags and shell out to `python -m storops`
-under the hood; nothing about how you call them has changed:
-
-```powershell
-pwsh scripts/scan.ps1 -Path C:\ -Json
-```
-
-Both forms are fully supported and produce equivalent output — see
-[`docs/plans/storops-v2-cross-platform-refactor.md`](docs/plans/storops-v2-cross-platform-refactor.md)
-§2.10 for why (100% backward compatibility, no transition window). Use
-whichever fits your environment; an agent following `SKILL.md` can use
-either.
+> The original `scripts/*.ps1` entry points and their PowerShell compatibility
+> layer were removed after the v2 Python rewrite settled — see
+> [`docs/plans/storops-v2-cross-platform-refactor.md`](docs/plans/storops-v2-cross-platform-refactor.md)
+> §2.10 for why they existed and why removing them was the plan all along. If
+> you have automation still calling `scripts/scan.ps1`-style entry points, pin
+> to a pre-removal tag or switch to the `storops` CLI form above — parameter
+> names map 1:1 (`-Path` → positional/`--path`, `-MaxRisk` → `--max-risk`,
+> `-Confirm` → `--confirm`, etc.), see [Quick start](#quick-start-agent-driven)
+> below for a full worked example.
 
 ## Layout
 
@@ -168,14 +154,7 @@ src/storops/         the Python implementation: CLI (cli.py), core business
                      logic (core/), platform abstraction (platform/), and
                      output rendering (output/) — see docs/plans/storops-v2-
                      cross-platform-refactor.md §2.2 for the full tree
-scripts/             PowerShell entry points, one per capability — now thin
-                     compatibility wrappers around `python -m storops`
-scripts/lib/         plumbing shared by the scripts/*.ps1 wrappers only
-                     (Python-interpreter resolution + CLI invocation); no
-                     business logic lives here anymore
-tests/               pytest suite (tests/unit, tests/integration) for the
-                     Python implementation, plus tests/smoke.ps1 (a thin
-                     smoke test for the .ps1 wrappers themselves)
+tests/               pytest suite (tests/unit, tests/integration)
 ```
 
 ## Safety model
@@ -196,36 +175,33 @@ user documents, etc.) is ever offered for automatic deletion.
 ## Quick start (agent-driven)
 
 An agent following `SKILL.md` will typically (examples below use Windows
-paths; on Linux/macOS pass POSIX paths instead, e.g. `-Path /` and
-`-Path ~/.cache` — `scan.ps1`/`search.ps1` default to `/` there automatically).
-Shown here as the `scripts/*.ps1` wrappers; the equivalent `python -m storops`
-form works identically (see [Two ways to call it](#two-ways-to-call-it)) —
-e.g. step 1 is also `python -m storops scan C:\`:
+paths; on Linux/macOS pass POSIX paths instead, e.g. `/` and `~/.cache` —
+`scan`/`search` default to `/` there automatically):
 
-```powershell
+```bash
 # 1. Read-only: see the big picture
-pwsh scripts/scan.ps1 -Path C:\
+python -m storops scan C:\
 
 # 2. Read-only: drill into a large, unidentified consumer
-pwsh scripts/inspect.ps1 -Path C:\Users\me\AppData\Local
+python -m storops inspect C:\Users\me\AppData\Local
 
 # 3. Read-only: attach meaning to what was found
-pwsh scripts/identify.ps1 -Path C:\Users\me\.lmstudio\models
+python -m storops identify C:\Users\me\.lmstudio\models
 
 # 4. Plan-only: build an itemized, risk-classified cleanup plan
-pwsh scripts/cleanup-plan.ps1 -MaxRisk low
+python -m storops cleanup plan --max-risk low
 
 # 5. Write, only after the user approves the plan from step 4
-pwsh scripts/cleanup-execute.ps1 -PlanFile .\storops-cleanup-plan.json -Confirm
+python -m storops cleanup execute --plan-file .\storops-cleanup-plan.json --confirm
 
 # 6. Plan-only: build a migration plan for a big, movable directory
-pwsh scripts/migrate-plan.ps1 -Path C:\Users\me\.lmstudio\models -Destination E:\AI\LMStudio\models
+python -m storops migrate plan C:\Users\me\.lmstudio\models E:\AI\LMStudio\models
 
 # 7. Write, only after the user approves the plan from step 6 — always verified
-pwsh scripts/migrate-execute.ps1 -PlanFile .\storops-migrate-plan.json -Confirm
+python -m storops migrate execute --plan-file .\storops-migrate-plan.json --confirm
 
 # 8. Read-only: re-check the migration's result at any later time
-pwsh scripts/verify.ps1 -ResultFile .\storops-migrate-result.json
+python -m storops verify --result-file .\storops-migrate-result.json
 ```
 
 See [`CHANGELOG.md`](CHANGELOG.md) for a history of notable changes.
