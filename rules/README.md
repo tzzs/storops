@@ -1,6 +1,6 @@
 # StorOps identification rules
 
-These YAML files are the deterministic knowledge base `scripts/lib/Identify.psm1`
+These YAML files are the deterministic knowledge base `src/storops/core/rules.py`
 matches paths against. They exist so the agent never has to *guess* what a
 path is from its name alone (see [`docs/DESIGN.md`](../docs/DESIGN.md) §3.3).
 
@@ -23,14 +23,15 @@ tracked follow-up work, not yet done -- see docs/DESIGN.md §4c.
 ## Rule schema
 
 Each file is a YAML list of **flat** rule entries — deliberately shallow (one
-list field, everything else a scalar) so `Identify.psm1`'s small, purpose-built
-YAML-subset reader can parse it without pulling in an external YAML module:
+list field, everything else a scalar) so `src/storops/core/rules.py`'s small,
+purpose-built YAML-subset reader can parse it without pulling in an external
+YAML module:
 
 ```yaml
 - id: lmstudio-models                  # stable, unique, kebab-case
   application: LM Studio               # human-readable owner name
   category: ai-model-cache             # see "Categories" below
-  path_patterns:                       # PowerShell -like patterns, matched
+  path_patterns:                       # shell-style wildcard patterns, matched
     - "%USERPROFILE%\\.lmstudio\\models\\*"   # against the full normalized
     - "%USERPROFILE%\\.cache\\lm-studio\\*"   # path (case-insensitive)
   confidence: 0.95                     # 0.0-1.0, how sure this ID is
@@ -56,8 +57,8 @@ required; everything else has safe defaults (`confidence: 0.5`,
 
 ### YAML subset supported
 
-`Identify.psm1`'s reader is **not** a general-purpose YAML parser — it only
-understands what these rule files actually use:
+`src/storops/core/rules.py`'s reader is **not** a general-purpose YAML parser
+— it only understands what these rule files actually use:
 
 - a top-level block sequence (`- id: ...`) of flat mappings
 - scalar values: quoted strings, bare strings, `true`/`false`, numbers
@@ -73,8 +74,9 @@ subset.
 ### Path pattern variables
 
 Patterns may use these tokens, expanded from the current environment at match
-time by `Identify.psm1`'s `Expand-StorOpsPatternTokens` (case-sensitive as
-written; see docs/DESIGN.md §4c). Only the set matching the *current*
+time by `expand_pattern_tokens()` in `src/storops/core/rules.py`
+(case-sensitive as written; see docs/DESIGN.md §4c). Only the set matching
+the *current*
 platform actually expands -- a token from another platform's set is left
 literal and simply never matches a real path, which is why `windows.yaml`/
 `linux.yaml`/`macos.yaml` are all loaded unconditionally regardless of which
@@ -86,7 +88,13 @@ platform StorOps is running on.
 | Linux | `%HOME%`, `%XDG_CACHE_HOME%`, `%XDG_CONFIG_HOME%`, `%XDG_DATA_HOME%`, `%TMPDIR%` |
 | macOS | `%HOME%`, `%CACHES%` (`~/Library/Caches`), `%APP_SUPPORT%` (`~/Library/Application Support`), `%XDG_CACHE_HOME%`, `%TMPDIR%` |
 
-Patterns use PowerShell `-like` wildcards (`*`, `?`).
+Patterns use shell-style wildcards (`*`, `?`, via `fnmatch`), matched
+case-insensitively -- `_pattern_matches()` in `src/storops/core/rules.py`
+also special-cases a trailing `%TOKEN%/sub/*` pattern to match the bare
+`.../sub` directory itself, not just things strictly inside it, since a
+plain `fnmatch` alone would otherwise silently miss the common "the thing
+being scanned is exactly the directory the pattern describes" case (this is
+the same false-negative the original PowerShell `-like` operator had).
 
 ### Categories (used for grouping/summaries)
 
@@ -105,7 +113,8 @@ never offers these for automatic deletion, full stop).
 
 ### Matching precedence
 
-`Identify.psm1` evaluates `windows.yaml`, `linux.yaml`, `macos.yaml` first (a
+`identify_path()` in `src/storops/core/rules.py` evaluates `windows.yaml`,
+`linux.yaml`, `macos.yaml` first (a
 `critical` system match wins outright and short-circuits further matching),
 then `ai-models.yaml`, then `applications.yaml`, then `caches.yaml`. Within a
 file, first matching rule wins; more specific patterns should be listed

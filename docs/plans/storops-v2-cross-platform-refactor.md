@@ -658,6 +658,12 @@ EXIT_CODES = {
 
 ### 2.10 PowerShell 兼容策略【已确认：本次 v2 发布即 100% 向后兼容，不分期、不留窗口期】
 
+> **后续更新（2026-09-02）**：本节记录的是 v2 发布当时的决定与落地方式，作为历史记录原样保留。
+> 按下方"兼容期长度"一条约定的退出条件（"存在到用户明确决定不再需要为止"），用户已明确决定不再需要
+> `scripts/*.ps1` 兼容层，该层（`scripts/` 目录整体，含 `lib/PythonBridge.psm1`）及
+> `tests/smoke.ps1` 已被移除；`storops` CLI（`python -m storops ...`）现在是唯一的调用方式。
+> `README.md`/`README.zh-CN.md`/`SKILL.md`/`rules/README.md`/`docs/DESIGN.md` 已同步更新。
+
 **决定（用户已明确）**：不采用"先发布新 CLI、旧脚本以后再考虑要不要兼容"的分期策略。`scripts/*.ps1` 的
 wrapper 化是 v2 这一次发布的**强制交付项**，与 Phase 5（CLI）在**同一个版本**里一起出，不是"Phase 6 以后
 再评估"。也就是说：v2 发布当天，`pwsh scripts/scan.ps1 -Path C:\` 这种旧调用方式必须继续可用，行为
