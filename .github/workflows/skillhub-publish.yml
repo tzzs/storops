@@ -1,8 +1,16 @@
 name: skillhub-publish
 
+# Triggers off release-please's completion rather than `release: published`
+# directly: release-please-action creates the release using GITHUB_TOKEN, and
+# GitHub never fires downstream `release`/`push`-triggered workflows for
+# content created by GITHUB_TOKEN (anti-recursion safeguard) -- so `on:
+# release` here would simply never run. workflow_run is exempt from that
+# restriction because it reacts to the workflow finishing, not to the event
+# release-please's own token produced.
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["release-please"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -19,10 +27,49 @@ permissions:
   actions: read
 
 jobs:
+  check:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.check.outputs.should_publish }}
+      release_tag: ${{ steps.check.outputs.release_tag }}
+    steps:
+      - name: Did release-please cut a release for this commit?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "manual trigger -- will publish"
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          repo="${{ github.repository }}"
+          head_sha="${{ github.event.workflow_run.head_sha }}"
+          latest_tag="$(gh api "repos/$repo/releases" --jq '.[0].tag_name // empty')"
+          if [ -z "$latest_tag" ]; then
+            echo "no releases exist yet -- nothing to publish"
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          tag_sha="$(gh api "repos/$repo/git/refs/tags/$latest_tag" --jq '.object.sha')"
+          if [ "$tag_sha" = "$head_sha" ]; then
+            echo "release-please cut $latest_tag for commit $head_sha -- will publish"
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            echo "release_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          else
+            echo "latest release $latest_tag points at $tag_sha, not $head_sha -- this run didn't cut a release, skipping"
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
   publish:
+    needs: check
+    if: needs.check.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - name: Install SkillHub CLI
         run: curl -fsSL https://skillhub.cn/install/install.sh | bash -s -- --cli-only
@@ -40,7 +87,7 @@ jobs:
         run: skillhub auth whoami
 
       - name: Verify SKILL.md version matches the release manifest
-        if: github.event_name == 'release'
+        if: github.event_name == 'workflow_run'
         run: |
           manifest_version="$(jq -r '.["."]' .release-please-manifest.json)"
           skill_version="$(grep '^version:' SKILL.md | awk '{print $2}')"
@@ -50,15 +97,12 @@ jobs:
           fi
           echo "SKILL.md version matches the release: $skill_version"
 
-      - name: Dry-run publish (format check)
-        run: skillhub publish . --dry-run
-
       - name: Require a green test run on this commit before publishing
-        if: github.event_name == 'release'
+        if: github.event_name == 'workflow_run'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sha="${{ github.sha }}"
+          sha="${{ github.event.workflow_run.head_sha }}"
           repo="${{ github.repository }}"
           echo "Waiting for the 'test' workflow's result on commit $sha..."
           for i in $(seq 1 40); do
@@ -79,12 +123,14 @@ jobs:
           echo "::error::timed out waiting for the test workflow to finish on commit $sha -- refusing to publish"
           exit 1
 
+      - name: Dry-run publish (format check)
+        run: skillhub publish . --dry-run
+
       - name: Publish to SkillHub
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         env:
-          RELEASE_NAME: ${{ github.event.release.name }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ needs.check.outputs.release_tag }}
           MANUAL_CHANGELOG: ${{ inputs.changelog }}
         run: |
-          changelog="${RELEASE_NAME:-${RELEASE_TAG:-$MANUAL_CHANGELOG}}"
+          changelog="${RELEASE_TAG:-$MANUAL_CHANGELOG}"
           skillhub publish . --changelog "$changelog"
