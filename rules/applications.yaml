@@ -9,6 +9,7 @@
   path_patterns:
     - "%APPDATA%\\npm-cache\\*"
     - "%LOCALAPPDATA%\\npm-cache\\*"
+    - "%HOME%/.npm/*"
   confidence: 0.9
   owner: user
   purpose: npm's downloaded package tarball cache.
@@ -27,6 +28,8 @@
   path_patterns:
     - "%LOCALAPPDATA%\\pnpm\\store\\*"
     - "%USERPROFILE%\\.pnpm-store\\*"
+    - "%XDG_DATA_HOME%/pnpm/store/*"
+    - "%HOME%/Library/pnpm/store/*"
   confidence: 0.9
   owner: user
   purpose: pnpm's content-addressable package store, shared/hard-linked across all local pnpm projects.
@@ -46,6 +49,8 @@
   path_patterns:
     - "%LOCALAPPDATA%\\Yarn\\Cache\\*"
     - "%USERPROFILE%\\.cache\\yarn\\*"
+    - "%XDG_CACHE_HOME%/yarn/*"
+    - "%CACHES%/Yarn/*"
   confidence: 0.85
   owner: user
   purpose: Yarn's downloaded package cache.
@@ -61,6 +66,8 @@
   category: package-manager-cache
   path_patterns:
     - "%LOCALAPPDATA%\\pip\\Cache\\*"
+    - "%XDG_CACHE_HOME%/pip/*"
+    - "%CACHES%/pip/*"
   confidence: 0.9
   owner: user
   purpose: pip's downloaded wheel/sdist cache.
@@ -77,6 +84,8 @@
   path_patterns:
     - "%LOCALAPPDATA%\\uv\\cache\\*"
     - "%APPDATA%\\uv\\cache\\*"
+    - "%XDG_CACHE_HOME%/uv/*"
+    - "%CACHES%/uv/*"
   confidence: 0.9
   owner: user
   purpose: uv's downloaded package cache and prebuilt wheel cache.
@@ -94,6 +103,9 @@
     - "%USERPROFILE%\\.conda\\pkgs\\*"
     - "%USERPROFILE%\\Anaconda3\\pkgs\\*"
     - "%USERPROFILE%\\Miniconda3\\pkgs\\*"
+    - "%HOME%/.conda/pkgs/*"
+    - "%HOME%/miniconda3/pkgs/*"
+    - "%HOME%/anaconda3/pkgs/*"
   confidence: 0.85
   owner: user
   purpose: Conda's shared, hard-linked package cache used across environments.
@@ -138,7 +150,7 @@
   application: WSL
   category: vm-disk
   path_patterns:
-    - "%LOCALAPPDATA%\\Packages\\*.WSL*\\LocalState\\*.vhdx"
+    - "%LOCALAPPDATA%\\Packages\\*\\LocalState\\ext4.vhdx"
     - "%USERPROFILE%\\AppData\\Local\\wsl\\*\\ext4.vhdx"
   confidence: 0.85
   owner: user
@@ -153,6 +165,40 @@
   migration_requires_app_closed: true
   cleanup_risk: critical
   cleanup_consequence: Deleting it destroys the entire Linux distro's filesystem and everything installed inside it.
+  notes: >
+    Store-installed WSL distro packages are named after the distro/publisher
+    (e.g. TheDebianProject.DebianGNULinux_xxxx, CanonicalGroupLimited.Ubuntu_xxxx)
+    and never contain the literal text "WSL", so the previous pattern
+    "*.WSL*\LocalState\*.vhdx" never matched any real installation. WSL2
+    distro virtual disks are always named ext4.vhdx regardless of publisher,
+    so match on that fixed filename instead.
+
+- id: docker-desktop-macos-vm-disk
+  application: Docker Desktop
+  category: vm-disk
+  path_patterns:
+    - "%HOME%/Library/Containers/com.docker.docker/Data/vms/0/*"
+  confidence: 0.9
+  owner: user
+  purpose: >
+    Docker Desktop for Mac's own VM disk image, backing every local image,
+    container, volume, and the build cache -- the macOS equivalent of the
+    Windows/WSL2 docker-desktop-wsl-data rule above (macOS Docker Desktop
+    does not use WSL; it runs its own lightweight VM instead).
+  deletable: false
+  migratable: true
+  migration_method: manual
+  migration_config_hint: >
+    Docker Desktop Settings -> Resources -> Advanced -> "Disk image
+    location" to relocate. Never move these files directly while Docker
+    Desktop is running.
+  migration_requires_app_closed: true
+  cleanup_risk: high
+  cleanup_consequence: >
+    Contains every local image, container, and volume; deleting it removes
+    all of them. `docker system prune` (from inside Docker) is the safe
+    way to reclaim unused-layer space without full deletion.
+  notes: This file only shrinks on its own rarely -- prefer `docker system prune -a` for reclaiming space before considering migration/deletion.
 
 - id: vscode-caches-workspacestorage
   application: Visual Studio Code
@@ -162,6 +208,14 @@
     - "%APPDATA%\\Code\\Cache\\*"
     - "%APPDATA%\\Code\\CachedExtensionVSIXs\\*"
     - "%APPDATA%\\Code\\User\\workspaceStorage\\*"
+    - "%XDG_CONFIG_HOME%/Code/CachedData/*"
+    - "%XDG_CONFIG_HOME%/Code/Cache/*"
+    - "%XDG_CONFIG_HOME%/Code/CachedExtensionVSIXs/*"
+    - "%XDG_CONFIG_HOME%/Code/User/workspaceStorage/*"
+    - "%APP_SUPPORT%/Code/CachedData/*"
+    - "%APP_SUPPORT%/Code/Cache/*"
+    - "%APP_SUPPORT%/Code/CachedExtensionVSIXs/*"
+    - "%APP_SUPPORT%/Code/User/workspaceStorage/*"
   confidence: 0.85
   owner: user
   purpose: >
@@ -180,6 +234,8 @@
   path_patterns:
     - "%LOCALAPPDATA%\\JetBrains\\*\\caches\\*"
     - "%USERPROFILE%\\.cache\\JetBrains\\*"
+    - "%HOME%/.cache/JetBrains/*"
+    - "%CACHES%/JetBrains/*"
   confidence: 0.85
   owner: user
   purpose: Per-IDE indexing caches (symbol index, compiled shared indexes) for IntelliJ/PyCharm/Rider/etc.
@@ -248,6 +304,10 @@
   path_patterns:
     - "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Cache\\*"
     - "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Cache\\*"
+    - "%XDG_CONFIG_HOME%/google-chrome/*/Cache/*"
+    - "%XDG_CONFIG_HOME%/microsoft-edge/*/Cache/*"
+    - "%CACHES%/Google/Chrome/*/Cache/*"
+    - "%CACHES%/Microsoft Edge/*/Cache/*"
   confidence: 0.9
   owner: user
   purpose: HTTP cache of previously visited page assets.
@@ -264,6 +324,12 @@
     - "%APPDATA%\\discord\\Cache\\*"
     - "%APPDATA%\\discord\\Code Cache\\*"
     - "%APPDATA%\\discord\\GPUCache\\*"
+    - "%XDG_CONFIG_HOME%/discord/Cache/*"
+    - "%XDG_CONFIG_HOME%/discord/Code Cache/*"
+    - "%XDG_CONFIG_HOME%/discord/GPUCache/*"
+    - "%APP_SUPPORT%/discord/Cache/*"
+    - "%APP_SUPPORT%/discord/Code Cache/*"
+    - "%APP_SUPPORT%/discord/GPUCache/*"
   confidence: 0.9
   owner: user
   purpose: Discord's Electron/Chromium cache (images, emoji, GPU shader cache).
@@ -278,6 +344,7 @@
   path_patterns:
     - "%APPDATA%\\Adobe\\Common\\Media Cache Files\\*"
     - "%APPDATA%\\Adobe\\Common\\Media Cache\\*"
+    - "%APP_SUPPORT%/Adobe/Common/Media Cache Files/*"
   confidence: 0.8
   owner: user
   purpose: Premiere Pro/After Effects media cache files (conformed audio, peak files) that speed up scrubbing/playback.
@@ -287,3 +354,6 @@
   migration_config_hint: Preferences -> Media Cache -> change the Media Cache Files database/location.
   cleanup_risk: medium
   cleanup_consequence: Regenerated automatically on next project open, but re-conforming media for large projects can take real time.
+  notes: >
+    No Linux pattern here by design -- the Adobe Creative Cloud desktop
+    suite does not ship a Linux build, so there is no real path to match.

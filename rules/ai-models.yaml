@@ -9,6 +9,7 @@
   path_patterns:
     - "%USERPROFILE%\\.lmstudio\\models\\*"
     - "%USERPROFILE%\\.cache\\lm-studio\\models\\*"
+    - "%HOME%/.lmstudio/models/*"
   confidence: 0.95
   owner: user
   purpose: >
@@ -32,6 +33,7 @@
   category: ai-model-weights
   path_patterns:
     - "%USERPROFILE%\\.ollama\\models\\*"
+    - "%HOME%/.ollama/models/*"
   confidence: 0.95
   owner: user
   purpose: Downloaded model weights (manifests + blobs) managed by Ollama.
@@ -52,6 +54,8 @@
   path_patterns:
     - "%USERPROFILE%\\.cache\\huggingface\\*"
     - "%USERPROFILE%\\.cache\\huggingface_hub\\*"
+    - "%HOME%/.cache/huggingface/*"
+    - "%HOME%/.cache/huggingface_hub/*"
   confidence: 0.95
   owner: user
   purpose: >
@@ -120,6 +124,7 @@
   category: ai-model-cache
   path_patterns:
     - "%USERPROFILE%\\.cache\\torch\\*"
+    - "%HOME%/.cache/torch/*"
   confidence: 0.85
   owner: user
   purpose: torch.hub downloaded model checkpoints and TorchVision pretrained weights.
@@ -136,6 +141,7 @@
   path_patterns:
     - "%LOCALAPPDATA%\\NVIDIA\\ComputeCache\\*"
     - "%LOCALAPPDATA%\\NVIDIA Corporation\\NV_Cache\\*"
+    - "%HOME%/.nv/ComputeCache/*"
   confidence: 0.9
   owner: user
   purpose: Compiled GPU kernel cache (PTX/cubin) used to speed up repeated CUDA workloads.
@@ -143,12 +149,16 @@
   migratable: false
   cleanup_risk: low
   cleanup_consequence: Silently and automatically rebuilt on next use; small one-time recompilation cost only.
+  notes: >
+    No macOS pattern here by design -- current Macs have no discrete NVIDIA
+    GPU, so there is no real ~/.nv/ComputeCache-equivalent to match.
 
 - id: whisper-cpp-ggml-models
   application: whisper.cpp / GGML tools
   category: ai-model-weights
   path_patterns:
     - "%USERPROFILE%\\.cache\\whisper\\*"
+    - "%HOME%/.cache/whisper/*"
   confidence: 0.6
   owner: user
   purpose: Downloaded Whisper speech-recognition model weights.
