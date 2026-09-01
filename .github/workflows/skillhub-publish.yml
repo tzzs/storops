@@ -91,7 +91,8 @@ jobs:
           zip -rq /tmp/storops-skill.zip . \
             -x '.git' -x '.git/**' -x '.github' -x '.github/**' \
             -x '.claude-plugin' -x '.claude-plugin/**' -x 'tests' -x 'tests/**' \
-            -x '.gitignore' -x '.release-please-manifest.json' -x 'release-please-config.json'
+            -x '.gitignore' -x '.release-please-manifest.json' -x 'release-please-config.json' \
+            -x 'LICENSE'
           echo "Packaged files:"
           unzip -l /tmp/storops-skill.zip
 
@@ -120,6 +121,14 @@ jobs:
           done
           echo "::error::timed out waiting for the test workflow to finish on commit $sha -- refusing to publish"
           exit 1
+
+      - name: DEBUG -- find the allowed-file-type list in the CLI itself
+        run: |
+          cli_real="$(readlink -f "$(command -v skillhub)")"
+          echo "CLI resolves to: $cli_real"
+          grep -rn "不允许的文件类型\|ALLOWED\|allowed_ext\|ALLOW_EXT" "$(dirname "$cli_real")" 2>/dev/null || true
+          find "$HOME/.skillhub" -name "*.py" 2>/dev/null | xargs grep -ln "不允许的文件类型\|ALLOWED" 2>/dev/null || true
+          find "$HOME/.skillhub" -name "*.py" 2>/dev/null | xargs grep -n "不允许的文件类型" -B5 -A5 2>/dev/null || true
 
       - name: Dry-run publish (format check)
         run: |
