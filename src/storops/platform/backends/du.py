@@ -84,15 +84,18 @@ class DuBackend:
             # BSD du's -a, -s, and -d depth are mutually exclusive
             # (`usage: du [-a | -s | -d depth]`) -- combining -a with -d
             # always fails with a usage error (exit 64), which used to be
-            # misreported below as "permission denied". -d depth alone
-            # already reports an entry for every file *and* directory down
-            # to that depth, so it fully substitutes for -a whenever a
-            # depth limit is requested.
-            args = ["du", "-k"]
-            if max_depth > 0:
-                args.extend(["-d", str(max_depth)])
-            else:
-                args.append("-a")
+            # misreported below as "permission denied". Unlike GNU, BSD's
+            # -d depth alone reports only directory totals, never
+            # individual files (confirmed against a real macOS runner --
+            # dropping -a silently loses every file-level entry, which
+            # broke callers that need files at a limited depth, e.g.
+            # top_entries/path_size). There is no single BSD du invocation
+            # that gives both file-level entries and a native depth limit,
+            # so on this flavor we always run -a (every file, unbounded
+            # depth) and let the depth filter below -- originally just a
+            # belt-and-braces guard for GNU -- do the real depth-limiting
+            # for BSD instead.
+            args = ["du", "-k", "-a"]
         args.extend(["--", target])
 
         # stderr is discarded, matching Du.psm1's `2>$null`: a
