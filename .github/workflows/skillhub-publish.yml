@@ -39,12 +39,16 @@ jobs:
       - name: Confirm identity
         run: skillhub auth whoami
 
-      - name: Sync SKILL.md version with the release manifest
+      - name: Verify SKILL.md version matches the release manifest
         if: github.event_name == 'release'
         run: |
-          version="$(jq -r '.["."]' .release-please-manifest.json)"
-          sed -i "s/^version: .*/version: ${version}/" SKILL.md
-          grep -qx "version: ${version}" SKILL.md || { echo "::error::SKILL.md version was not updated to ${version}"; exit 1; }
+          manifest_version="$(jq -r '.["."]' .release-please-manifest.json)"
+          skill_version="$(grep '^version:' SKILL.md | awk '{print $2}')"
+          if [ "$manifest_version" != "$skill_version" ]; then
+            echo "::error::SKILL.md version ($skill_version) does not match the release manifest ($manifest_version) -- check the '# x-release-please-version' annotation on SKILL.md's version line"
+            exit 1
+          fi
+          echo "SKILL.md version matches the release: $skill_version"
 
       - name: Dry-run publish (format check)
         run: skillhub publish . --dry-run

@@ -3,7 +3,7 @@ name: storops
 description: 'Storage Operations for AI Agents. Cross-platform (Windows, Linux, macOS): diagnose why a drive or volume is full, identify what specific applications/caches/AI-model files are consuming space, and safely clean up or migrate them -- with mandatory user confirmation before any write and verification after every migration. Use when the user asks things like "why is my C: drive full", "why is my disk full" / "/ is full", "clean up disk space", "move LM Studio / Ollama / Docker / <app> to another drive", or "is it safe to delete <path>".'
 slug: storops
 displayName: StorOps
-version: 0.2.0
+version: 0.2.0 # x-release-please-version
 summary: '面向 AI Agent 的存储运维能力：跨平台（Windows / Linux / macOS）诊断磁盘空间占用、安全清理与迁移，写入前必须确认，迁移后自动验证。'
 license: MIT
 ---
