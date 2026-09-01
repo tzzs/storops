@@ -86,16 +86,15 @@ jobs:
       - name: Confirm identity
         run: skillhub auth whoami
 
-      - name: Verify SKILL.md version matches the release manifest
-        if: github.event_name == 'workflow_run'
+      - name: Package skill content
         run: |
-          manifest_version="$(jq -r '.["."]' .release-please-manifest.json)"
-          skill_version="$(grep '^version:' SKILL.md | awk '{print $2}')"
-          if [ "$manifest_version" != "$skill_version" ]; then
-            echo "::error::SKILL.md version ($skill_version) does not match the release manifest ($manifest_version) -- check the '# x-release-please-version' annotation on SKILL.md's version line"
-            exit 1
-          fi
-          echo "SKILL.md version matches the release: $skill_version"
+          zip -rq /tmp/storops-skill.zip . \
+            -x '.git' -x '.git/**' -x '.github' -x '.github/**' \
+            -x '.claude-plugin' -x '.claude-plugin/**' -x 'tests' -x 'tests/**' \
+            -x '.gitignore' -x '.release-please-manifest.json' -x 'release-please-config.json' \
+            -x 'LICENSE'
+          echo "Packaged files:"
+          unzip -l /tmp/storops-skill.zip
 
       - name: Require a green test run on this commit before publishing
         if: github.event_name == 'workflow_run'
@@ -124,7 +123,9 @@ jobs:
           exit 1
 
       - name: Dry-run publish (format check)
-        run: skillhub publish . --dry-run
+        run: |
+          version="$(jq -r '.["."]' .release-please-manifest.json)"
+          skillhub publish /tmp/storops-skill.zip --dry-run --version "$version"
 
       - name: Publish to SkillHub
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
@@ -132,5 +133,6 @@ jobs:
           RELEASE_TAG: ${{ needs.check.outputs.release_tag }}
           MANUAL_CHANGELOG: ${{ inputs.changelog }}
         run: |
+          version="$(jq -r '.["."]' .release-please-manifest.json)"
           changelog="${RELEASE_TAG:-$MANUAL_CHANGELOG}"
-          skillhub publish . --changelog "$changelog"
+          skillhub publish /tmp/storops-skill.zip --changelog "$changelog" --version "$version"
