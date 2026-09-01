@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.4](https://github.com/tzzs/storops/compare/storops-v1.0.3...storops-v1.0.4) (2026-09-01)
+
+
+### Bug Fixes
+
+* **ci:** open release-please PRs with a PAT instead of GITHUB_TOKEN ([8be5439](https://github.com/tzzs/storops/commit/8be5439f3091772ce5ec7861279839ec1aec1c4d))
+* **ci:** open release-please PRs with a PAT instead of GITHUB_TOKEN ([2cd7024](https://github.com/tzzs/storops/commit/2cd7024597d8e9daa4e0eeed96c0b98added4a8a))
+* dedupe cleanup probes and guard corrupt Windows mtimes ([a41fabc](https://github.com/tzzs/storops/commit/a41fabc80531968d83dc42d7fd064e5002d8a2fb))
+* dedupe cleanup probes and guard corrupt Windows mtimes ([6c80fbf](https://github.com/tzzs/storops/commit/6c80fbfaad2d3cbe5d1dccebe2a576779e2cce4a))
+
 ## [1.0.3](https://github.com/tzzs/storops/compare/storops-v1.0.2...storops-v1.0.3) (2026-09-01)
 
 
