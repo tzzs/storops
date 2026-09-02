@@ -132,6 +132,76 @@ class TestParseWizTreeCsv:
         assert entries[0].full_name == "C:\\Users\\test\\a, b.txt"
         assert entries[0].size_bytes == 42
 
+    def test_real_export_banner_line_and_extra_drive_columns(self, tmp_path):
+        # A real (unregistered) WizTree install prepends a donation-nag
+        # banner line with no comma at all, and localizes the header to the
+        # OS display language (zh-CN here) -- both already covered above.
+        # New here: the *first* data row (the scanned root itself) carries
+        # extra trailing DRIVECAPACITY/FREESPACE/USEDSPACE/RESERVEDSPACE
+        # columns beyond the fixed 7, observed on a real export -- must not
+        # break parsing of that row or any row after it.
+        csv_path = tmp_path / "real_shaped.csv"
+        csv_path.write_text(
+            "生成由 WizTree 4.32 2026/9/3 3:32:54 (您可以通过捐赠隐藏此信息)\n"
+            "文件名称,大小,分配,修改时间,属性,文件,文件夹,DRIVECAPACITY,FREESPACE,USEDSPACE,RESERVEDSPACE\n"
+            '"C:\\Windows\\System32\\drivers\\",176843272,177795072,2026/09/03 01:43:32,0,621,11,'
+            "321153658880,42366251008,278787407872,0\n"
+            '"C:\\Windows\\System32\\drivers\\Netwfw10.dat",15597900,15601664,2025/06/17 23:12:16,32,0,0\n',
+            encoding="utf-8",
+        )
+        entries = wiztree_mod.parse_wiztree_csv(str(csv_path))
+        assert len(entries) == 2
+        root, file_entry = entries
+        assert root.is_folder is True
+        assert root.size_bytes == 176843272
+        assert root.file_count == 621
+        assert root.folder_count == 11
+        assert root.modified == datetime(2026, 9, 3, 1, 43, 32)
+        assert file_entry.modified == datetime(2025, 6, 17, 23, 12, 16)
+
+
+class TestParseDatetimeFastPath:
+    """_parse_datetime()'s regex+datetime() fast path must accept exactly
+    what the strptime loop it sits in front of accepts, for all 5
+    _DATETIME_FORMATS -- including the two "/"-separated formats that share
+    one regex shape and are only disambiguated by which interpretation
+    produces valid month/day values (mirrors trying %m/%d/%Y then %d/%m/%Y
+    in order). Anything the fast regexes don't recognize (e.g. non-zero-
+    padded fields, which strptime accepts but this fast path does not
+    attempt) must still fall through to the original strptime loop.
+    """
+
+    def test_iso_dash_format(self):
+        assert wiztree_mod._parse_datetime("2024-01-15 10:30:00") == datetime(2024, 1, 15, 10, 30, 0)
+
+    def test_iso_slash_format(self):
+        # The format a real zh-CN WizTree install actually emits.
+        assert wiztree_mod._parse_datetime("2024/01/15 10:30:00") == datetime(2024, 1, 15, 10, 30, 0)
+
+    def test_us_month_day_year_unambiguous(self):
+        # Day 25 can't be a month -- %m/%d/%Y succeeds on the first try.
+        assert wiztree_mod._parse_datetime("03/25/2024 10:30:00") == datetime(2024, 3, 25, 10, 30, 0)
+
+    def test_eu_day_month_year_falls_through_from_us_interpretation(self):
+        # %m/%d/%Y would read this as month=25 (invalid) and must fall
+        # through to %d/%m/%Y (day=25, month=3) -- same disambiguation
+        # order as the pre-existing strptime loop.
+        assert wiztree_mod._parse_datetime("25/03/2024 10:30:00") == datetime(2024, 3, 25, 10, 30, 0)
+
+    def test_iso_t_separator_format(self):
+        assert wiztree_mod._parse_datetime("2024-01-15T10:30:00") == datetime(2024, 1, 15, 10, 30, 0)
+
+    def test_non_zero_padded_falls_back_to_strptime(self):
+        # No fast regex matches single-digit fields -- must still work via
+        # the strptime fallback (strptime itself accepts these).
+        assert wiztree_mod._parse_datetime("2024-1-5 9:5:3") == datetime(2024, 1, 5, 9, 5, 3)
+
+    def test_unparseable_garbage_returns_none(self):
+        assert wiztree_mod._parse_datetime("not a date") is None
+
+    def test_empty_string_returns_none(self):
+        assert wiztree_mod._parse_datetime("") is None
+
 
 class TestWizTreeBackendSubprocessArgs:
     """Locks down the exact argument list passed to subprocess.run for a

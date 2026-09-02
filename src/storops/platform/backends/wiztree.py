@@ -2,13 +2,25 @@
 parses the resulting CSV.
 
 Ports the behavior (not the language) of the old scripts/lib/backends/
-WizTree.psm1. CAVEAT carried forward unchanged from that module's own
-comment: this was authored without access to a real Windows machine with
-WizTree installed, so the CLI flags below come from WizTree's published
-CLI docs (diskanalyzer.com/guide), not a live test run. In particular
-whether `/exportmaxdepth` counts depth relative to the scanned target or
-the drive root is assumed ("relative to the scanned target") but not
-verified -- see WizTree.psm1's matching note.
+WizTree.psm1. Originally authored without access to a real Windows machine
+with WizTree installed, so the CLI flags came from WizTree's published CLI
+docs (diskanalyzer.com/guide), not a live test run -- since verified
+end-to-end against a real WizTree 4.32 install: find_wiztree() ->
+_run_export() -> parse_wiztree_csv() round-trips correctly, including two
+real-world shapes no hand-written fixture had covered before: an
+unregistered install's localized donation-nag banner line ahead of the
+(also-localized) header row, and the scanned root's data row carrying
+extra trailing DRIVECAPACITY/FREESPACE/USEDSPACE/RESERVEDSPACE columns
+beyond the fixed 7 (see test_real_export_banner_line_and_extra_drive_columns).
+Still unverified: whether `/exportmaxdepth` counts depth relative to the
+scanned target or the drive root (assumed "relative to the scanned
+target" -- see WizTree.psm1's matching note), and admin=True's actual
+MFT-direct-read speedup (WizTree does not self-elevate via UAC when
+/admin=1 is passed to a non-elevated process -- it just fails outright;
+confirmed live). Without elevation, a WizTree CLI export was measured
+*slower* than platform.windows.scan.WindowsNativeBackend on this same
+machine for a directory in the tens/hundreds of thousands of entries --
+see README.md's "Admin privileges are optional but recommended" note.
 """
 from __future__ import annotations
 
@@ -32,6 +44,17 @@ if TYPE_CHECKING:
 # which optional export flags were passed. Folder rows end "File Name"
 # with a trailing backslash.
 _FIXED_HEADER = ("File Name", "Size", "Allocated", "Modified", "Attributes", "Files", "Folders")
+_IDX_NAME, _IDX_SIZE, _IDX_ALLOCATED, _IDX_MODIFIED, _IDX_ATTRIBUTES, _IDX_FILES, _IDX_FOLDERS = range(7)
+
+
+def _field(fields: list[str], index: int) -> str | None:
+    """fields[index], or None past the end -- a data row is normally
+    exactly len(_FIXED_HEADER) long, but the *first* row of a scan-root
+    export carries extra trailing DRIVECAPACITY/FREESPACE/... columns
+    (observed on a real WizTree install), and any row could in principle
+    be short/malformed, so this never raises IndexError either way.
+    """
+    return fields[index] if index < len(fields) else None
 
 _INT_RE = re.compile(r"^-?\d+$")
 
@@ -42,6 +65,60 @@ _DATETIME_FORMATS = (
     "%d/%m/%Y %H:%M:%S",
     "%Y-%m-%dT%H:%M:%S",
 )
+
+# Fast-path patterns mirroring _DATETIME_FORMATS 1:1 (group order maps each
+# capture to (year, month, day, hour, minute, second)) -- datetime.strptime()
+# profiles as the dominant cost of parsing a large WizTree export: CPython's
+# _strptime() calls locale.getlocale() on every single invocation to resolve
+# month/weekday names, even though none of these formats use any (they're
+# plain zero-padded numbers). Measured on a synthetic 1.5M-row export sized
+# to a real `C:\` scan: ~13s with strptime, ~1s with this regex + datetime()
+# fast path -- and a real machine's locale determines which of the 5 formats
+# actually matches, so on a non-US-format Windows install (confirmed live:
+# a zh-CN install here exports "%Y/%m/%d %H:%M:%S", format #2) every row
+# already pays for one failed strptime attempt before the one that succeeds.
+# Only matches the exact zero-padded shape WizTree always emits; anything
+# else falls through to the strptime loop below unchanged, so no input that
+# loop ever accepted stops being accepted -- this is purely a fast path in
+# front of it, not a replacement.
+def _ymd_order(g: tuple[str, ...]) -> tuple[str, str, str, str, str, str]:
+    return g
+
+
+def _dmy_swap_mdy(g: tuple[str, ...]) -> tuple[str, str, str, str, str, str]:
+    return g[2], g[0], g[1], g[3], g[4], g[5]
+
+
+def _dmy_swap_dmy(g: tuple[str, ...]) -> tuple[str, str, str, str, str, str]:
+    return g[2], g[1], g[0], g[3], g[4], g[5]
+
+
+_FAST_DATETIME_PATTERNS = (
+    (re.compile(r"^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$"), _ymd_order),
+    (re.compile(r"^(\d{4})/(\d{2})/(\d{2}) (\d{2}):(\d{2}):(\d{2})$"), _ymd_order),
+    (re.compile(r"^(\d{2})/(\d{2})/(\d{4}) (\d{2}):(\d{2}):(\d{2})$"), _dmy_swap_mdy),
+    (re.compile(r"^(\d{2})/(\d{2})/(\d{4}) (\d{2}):(\d{2}):(\d{2})$"), _dmy_swap_dmy),
+    (re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$"), _ymd_order),
+)
+
+
+def _try_fast_datetime(value: str) -> datetime | None:
+    """Regex + datetime() equivalent of trying each _DATETIME_FORMATS entry
+    in order via strptime -- same fallthrough-on-ValueError semantics
+    (needed since the two "/"-separated formats share one regex shape and
+    are only disambiguated by which interpretation produces valid month/day
+    values, exactly like trying %m/%d/%Y then %d/%m/%Y today).
+    """
+    for pattern, to_ymd in _FAST_DATETIME_PATTERNS:
+        m = pattern.match(value)
+        if not m:
+            continue
+        y, mo, d, h, mi, s = to_ymd(m.groups())
+        try:
+            return datetime(int(y), int(mo), int(d), int(h), int(mi), int(s))
+        except ValueError:
+            continue
+    return None
 
 
 def find_wiztree() -> str | None:
@@ -114,6 +191,11 @@ def _parse_datetime(value: str) -> datetime | None:
     value = value.strip().strip('"')
     if not value:
         return None
+
+    fast = _try_fast_datetime(value)
+    if fast is not None:
+        return fast
+
     for fmt in _DATETIME_FORMATS:
         try:
             return datetime.strptime(value, fmt)
@@ -154,19 +236,21 @@ def parse_wiztree_csv(csv_path: str) -> list[Entry]:
     for fields in csv.reader(data_lines):
         if not fields:
             continue
-        row = dict(zip(_FIXED_HEADER, fields))
-        name = row.get("File Name", "")
+        name = _field(fields, _IDX_NAME)
         if not name:
             continue
 
         is_folder = name.endswith("\\")
         full_name = name.rstrip("\\") if is_folder else name
 
-        size_bytes = _parse_int(row.get("Size"))
-        allocated_bytes = _parse_int(row.get("Allocated"))
-        modified = _parse_datetime(row["Modified"]) if row.get("Modified") else None
-        file_count = _parse_int(row["Files"]) if row.get("Files") not in (None, "") else None
-        folder_count = _parse_int(row["Folders"]) if row.get("Folders") not in (None, "") else None
+        size_bytes = _parse_int(_field(fields, _IDX_SIZE))
+        allocated_bytes = _parse_int(_field(fields, _IDX_ALLOCATED))
+        modified_raw = _field(fields, _IDX_MODIFIED)
+        modified = _parse_datetime(modified_raw) if modified_raw else None
+        files_raw = _field(fields, _IDX_FILES)
+        file_count = _parse_int(files_raw) if files_raw not in (None, "") else None
+        folders_raw = _field(fields, _IDX_FOLDERS)
+        folder_count = _parse_int(folders_raw) if folders_raw not in (None, "") else None
 
         entries.append(
             Entry(
