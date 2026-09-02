@@ -130,20 +130,27 @@ class DuBackend:
 
             # Belt-and-braces: du was already asked to stop at max_depth,
             # this just guards against any flavor quirk that returns deeper
-            # rows.
-            depth = len(_split_segments(entry_path)) - root_segments
-            if max_depth != 0 and depth > max_depth:
-                continue
+            # rows. Computing a row's depth is itself real per-row work
+            # (splitting the whole path into segments) that matters at
+            # scale, so it's skipped entirely for the common max_depth=0
+            # (unlimited) case, where the check below is a no-op anyway.
+            if max_depth != 0:
+                depth = len(_split_segments(entry_path)) - root_segments
+                if depth > max_depth:
+                    continue
 
             is_folder = os.path.isdir(entry_path)
             if (is_folder and not export_folders) or ((not is_folder) and not export_files):
                 continue
 
-            name = os.path.basename(entry_path)
-            if name_filter and not fnmatch(name, name_filter):
-                continue
-            if name_exclude and fnmatch(name, name_exclude):
-                continue
+            # Likewise: basename() is only ever needed for these two
+            # filters, so skip it when neither was given.
+            if name_filter or name_exclude:
+                name = os.path.basename(entry_path)
+                if name_filter and not fnmatch(name, name_filter):
+                    continue
+                if name_exclude and fnmatch(name, name_exclude):
+                    continue
 
             entries.append(
                 Entry(
