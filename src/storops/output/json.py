@@ -141,6 +141,8 @@ def search_result_to_dict(result: SearchResult) -> dict[str, Any]:
                 "Modified": _dt(e.modified),
                 "Application": e.application,
                 "Category": e.category,
+                "CleanupRisk": e.cleanup_risk,
+                "Recommended": e.recommended,
             }
             for e in result.entries
         ],

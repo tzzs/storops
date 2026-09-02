@@ -27,10 +27,16 @@ Discover → Understand → Diagnose → Recommend → Plan → Execute → Veri
 
 ## 当前状态
 
-MVP。Windows 是目前最成熟的目标平台,以 [WizTree](https://diskanalyzer.com/)
-作为存储发现后端——StorOps 从不重新实现磁盘/MFT 扫描,也从不驱动 WizTree 的
-GUI(不做自动化、截图或 OCR):它只在命令行调用 `WizTree64.exe` 并解析其 CSV
-导出结果。Linux/macOS 支持是新加的,基于 [gdu](https://github.com/dundee/gdu)
+MVP。Windows 是目前最成熟的目标平台。[WizTree](https://diskanalyzer.com/)
+在它真正占优势的场景下作为存储发现后端使用——StorOps 从不重新实现磁盘/MFT
+扫描,也从不驱动 WizTree 的 GUI(不做自动化、截图或 OCR):它只在命令行调用
+`WizTree64.exe` 并解析其 CSV 导出结果——但仅限于在已提权的进程里扫描整个盘符
+(如 `C:\`)。实测发现 WizTree 的命令行导出不管目标多小都会读取整个卷的文件
+表,所以只有目标接近整个卷时这个固定开销才划算;对于更窄的目标(`scan`/
+`inspect`/`search` 的大多数使用场景都是如此),这个固定成本摊不平,实测比
+StorOps 自带的并行原生扫描慢 2~10 倍——所以除了整盘扫描这一种情况,不管装没
+装 WizTree,都会用原生扫描。Linux/macOS 支持是新加的,基于
+[gdu](https://github.com/dundee/gdu)
 (找不到 gdu 时回退到系统自带的 `du`),走同一套 scan-backend 接口——见
 [`docs/DESIGN.md`](docs/DESIGN.md) §4a。AI 模型/应用/缓存的识别规则
 (`rules/ai-models.yaml`、`applications.yaml`、`caches.yaml`)目前仍只有
@@ -42,10 +48,12 @@ Windows token;只有关键系统路径规则(`rules/windows.yaml`/`linux.yaml`/
 - **Python 3.11+**——唯一的实现(`src/storops/`);`python3`/`python`
   需要在 `PATH` 上。最常见的"克隆进 skills 目录"安装方式不需要
   `pip install`——从 checkout 目录直接运行 `python -m storops` 即可。
-- **Windows**:NTFS 卷,加上已安装的 [WizTree](https://diskanalyzer.com/)
-  (`WizTree64.exe` 需在 `PATH` 中、位于标准安装目录,或通过
-  `$env:STOROPS_WIZTREE_PATH` 指定路径)。管理员权限可选但推荐:WizTree 的
-  `/admin=1` 模式直接读取 NTFS MFT,比标准扫描快得多、也更完整。
+- **Windows**:NTFS 卷。[WizTree](https://diskanalyzer.com/) 是可选的——
+  StorOps 自带的原生扫描(`os.scandir`,把扫描根目录的直接子目录分给多线程并行)
+  已经覆盖了除"已提权进程扫整个盘"之外的所有场景,这也是实测中 WizTree 命令行
+  导出唯一占优势的场景(见上方"当前状态")。如果你经常在提权终端下扫整个盘,
+  可以装上(`WizTree64.exe` 需在 `PATH` 中、位于标准安装目录、能被它自己的安装
+  注册表项找到,或通过 `$env:STOROPS_WIZTREE_PATH` 指定路径);否则不装也没关系。
 - **Linux/macOS**:推荐安装 [gdu](https://github.com/dundee/gdu)(`brew
   install gdu` / `apt install gdu`,或参见其安装文档)以获得并行、快得多的
   扫描;找不到 `gdu` 时 StorOps 会自动回退到系统自带的 `du`(并打印一次性

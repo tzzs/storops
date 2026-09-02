@@ -247,6 +247,8 @@ class SearchRow:
     modified: datetime | None
     application: str | None
     category: str
+    cleanup_risk: str
+    recommended: str
 
 
 @dataclass(frozen=True)

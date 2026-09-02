@@ -84,11 +84,18 @@ commands ad hoc; the user should not need to know command names.
 
 1. `storops scan C:\` (or the drive the user mentioned) for top-level
    consumers and free space.
-2. For any large and unidentified or ambiguous entry, `storops inspect` into
-   it to see what's actually inside.
-3. Cross-reference every notable entry with `storops identify` (scan/inspect
-   already attach identity + recommended action, but call it directly for a
-   single path the user asks about).
+2. To see what's inside several large entries at once, prefer one `storops
+   search <path> --folders --max-depth 2` (bump to `3` if two levels isn't
+   enough) over `storops inspect`-ing each one individually. `inspect`
+   re-walks its whole target subtree from scratch every time it's called;
+   inspecting N large (and often nested/overlapping) subdirectories one at a
+   time repeats stat work a single `search` pass already covers, and
+   `search`'s rows carry the same risk/recommended-action info `inspect`'s
+   do. Reach for `storops inspect <path>` only to drill into one specific
+   directory further than that search already went.
+3. Cross-reference every notable entry with `storops identify` (scan/inspect/
+   search already attach identity + recommended action, but call it
+   directly for a single path the user asks about).
 4. Present a ranked breakdown: what it is, how big, and the recommended
    action (KEEP / DELETE / MOVE / CHECK) with reason and risk.
 5. Never delete or move anything at this stage -- this is purely diagnostic.
