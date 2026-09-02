@@ -102,8 +102,23 @@ class TestFindWizTreeViaRegistry:
     """_find_wiztree_via_registry()'s own logic, isolated from the real
     Windows registry via monkeypatched _read_uninstall_entries() so these
     run identically regardless of what is actually installed on the
-    machine executing the tests.
+    machine executing the tests -- and, via the autouse fixture below,
+    regardless of which platform runs them: on a non-Windows CI runner
+    `import winreg` itself raises (winreg doesn't exist there), which
+    _find_wiztree_via_registry() treats as "nothing found" and returns
+    None *before ever calling* _read_uninstall_entries(). Without a fake
+    winreg to get past that import, every test here that expects None
+    back would pass for the wrong reason (the import failing, not the
+    mocked lookup logic being exercised) -- caught by actually running
+    this suite on Linux, not just Windows.
     """
+
+    @pytest.fixture(autouse=True)
+    def _fake_winreg_importable(self, monkeypatch):
+        monkeypatch.setitem(
+            sys.modules, "winreg",
+            types.SimpleNamespace(HKEY_LOCAL_MACHINE=object(), HKEY_CURRENT_USER=object()),
+        )
 
     def test_matches_display_name_case_insensitively_and_version_agnostic(self):
         entries = [
