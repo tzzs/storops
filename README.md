@@ -29,11 +29,18 @@ See [`docs/DESIGN.md`](docs/DESIGN.md) for the full product design and
 
 ## Status
 
-MVP. Windows is the most mature target, built on top of
-[WizTree](https://diskanalyzer.com/) as the storage-discovery backend —
-StorOps never re-implements disk/MFT scanning, and never drives the WizTree
-GUI (no automation, screenshots, or OCR): it only calls `WizTree64.exe` from
-the command line and parses its CSV export. Linux/macOS support is newer and
+MVP. Windows is the most mature target. [WizTree](https://diskanalyzer.com/)
+is used as a storage-discovery backend where it actually wins — StorOps never
+re-implements disk/MFT scanning, and never drives the WizTree GUI (no
+automation, screenshots, or OCR): it only calls `WizTree64.exe` from the
+command line and parses its CSV export — but only for a whole-drive scan
+(e.g. `C:\`) on an elevated process. Live measurement found WizTree's CLI
+export reads the entire volume's file table regardless of how small the
+requested target is, so for anything narrower (which most `scan`/`inspect`/
+`search` targets are) that fixed cost isn't amortized and it measurably loses
+to StorOps' own parallel native scan, by 2x-10x depending on target size —
+so everything else uses the native scan instead, WizTree or not. Linux/macOS
+support is newer and
 uses [gdu](https://github.com/dundee/gdu) (falling back to the system `du`)
 behind the same scan-backend interface — see
 [`docs/DESIGN.md`](docs/DESIGN.md) §4a. Identification rules for AI-model/
@@ -48,11 +55,15 @@ coverage.
   `python` needs to be on `PATH`. No `pip install` is required for the
   common "cloned into a skills directory" install path — `python -m storops`
   works straight out of the checkout.
-- **Windows**: NTFS volumes, plus [WizTree](https://diskanalyzer.com/)
-  installed (`WizTree64.exe` on `PATH`, in a standard install location, or
-  pointed to via `$env:STOROPS_WIZTREE_PATH`). Admin privileges are optional
-  but recommended: WizTree's `/admin=1` mode reads the NTFS MFT directly and
-  is dramatically faster/more complete than a standard scan.
+- **Windows**: NTFS volumes. [WizTree](https://diskanalyzer.com/) is
+  optional — StorOps' own native scan (`os.scandir`, parallelized across a
+  scan root's immediate subdirectories) is used for everything except a
+  whole-drive scan on an elevated process, the one scope WizTree's CLI
+  export was actually measured to win at (see Status above); install it
+  (`WizTree64.exe` on `PATH`, in a standard install location, found via its
+  own install-location registry entry, or pointed to via
+  `$env:STOROPS_WIZTREE_PATH`) if you regularly run whole-drive scans
+  elevated, skip it otherwise.
 - **Linux/macOS**: [gdu](https://github.com/dundee/gdu) recommended (`brew
   install gdu` / `apt install gdu` / see its install docs) for a parallel,
   much faster scan; StorOps falls back to the system `du` automatically if

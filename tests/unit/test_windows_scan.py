@@ -326,16 +326,132 @@ class TestWindowsCapacityProvider:
 
 
 class TestGetWindowsScanBackend:
-    def test_uses_wiztree_when_found(self, monkeypatch):
+    def test_wraps_in_adaptive_backend_when_wiztree_found(self, monkeypatch):
         from storops.platform.backends import wiztree as wiztree_mod
 
         monkeypatch.setattr(wiztree_mod, "find_wiztree", lambda: "C:\\WizTree64.exe")
         backend = scan_mod.get_windows_scan_backend()
-        assert backend.name == "WizTree"
+        assert isinstance(backend, scan_mod._AdaptiveWindowsBackend)
 
-    def test_falls_back_to_native_when_wiztree_not_found(self, monkeypatch):
+    def test_falls_back_to_plain_native_when_wiztree_not_found(self, monkeypatch):
+        # No WizTree at all -- no adaptive wrapper needed, since there is
+        # no choice to make.
         from storops.platform.backends import wiztree as wiztree_mod
 
         monkeypatch.setattr(wiztree_mod, "find_wiztree", lambda: None)
         backend = scan_mod.get_windows_scan_backend()
+        assert type(backend) is WindowsNativeBackend
         assert backend.name == "WindowsNative"
+
+
+class _FakeBackend:
+    """Minimal ScanBackend stand-in for testing _AdaptiveWindowsBackend's
+    own routing logic in isolation from either real backend."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.calls: list[tuple] = []
+
+    def scan(self, path, **kwargs):
+        self.calls.append(("scan", path, kwargs))
+        return [f"scan:{self.name}"]
+
+    def top_entries(self, path, **kwargs):
+        self.calls.append(("top_entries", path, kwargs))
+        return [f"top_entries:{self.name}"]
+
+    def path_size(self, path, **kwargs):
+        self.calls.append(("path_size", path, kwargs))
+        return f"path_size:{self.name}"
+
+    def advice(self):
+        return f"advice:{self.name}"
+
+    def take_warnings(self):
+        return [f"warning:{self.name}"]
+
+
+class TestAdaptiveWindowsBackend:
+    """_AdaptiveWindowsBackend routes each call to WizTree only for a
+    whole-volume target on an elevated process; WindowsNativeBackend
+    otherwise -- see its docstring in platform/windows/scan.py for the
+    live measurements this rule is based on. is_admin() is monkeypatched
+    throughout rather than relying on the real ambient elevation status
+    of whatever machine runs these tests.
+    """
+
+    def _make(self, monkeypatch, *, admin: bool):
+        wiztree = _FakeBackend("WizTree")
+        native = _FakeBackend("WindowsNative")
+        monkeypatch.setattr(scan_mod, "is_admin", lambda: admin)
+        return scan_mod._AdaptiveWindowsBackend(wiztree, native), wiztree, native
+
+    def test_volume_root_and_elevated_uses_wiztree(self, monkeypatch):
+        backend, wiztree, native = self._make(monkeypatch, admin=True)
+        result = backend.scan("C:\\", export_files=True)
+        assert result == ["scan:WizTree"]
+        assert wiztree.calls == [("scan", "C:\\", {"export_folders": True, "export_files": True, "max_depth": 0, "name_filter": None, "name_exclude": None, "admin": False})]
+        assert native.calls == []
+        assert backend.name == "WizTree"
+
+    def test_volume_root_but_not_elevated_uses_native(self, monkeypatch):
+        backend, wiztree, native = self._make(monkeypatch, admin=False)
+        backend.scan("C:\\")
+        assert wiztree.calls == []
+        assert len(native.calls) == 1
+        assert backend.name == "WindowsNative"
+
+    def test_subdirectory_even_when_elevated_uses_native(self, monkeypatch):
+        backend, wiztree, native = self._make(monkeypatch, admin=True)
+        backend.scan("C:\\Users\\test")
+        assert wiztree.calls == []
+        assert len(native.calls) == 1
+        assert backend.name == "WindowsNative"
+
+    def test_top_entries_and_path_size_route_the_same_way(self, monkeypatch):
+        backend, wiztree, native = self._make(monkeypatch, admin=True)
+        backend.top_entries("C:\\", top=5)
+        backend.path_size("C:\\")
+        assert len(wiztree.calls) == 2
+        assert native.calls == []
+
+    def test_take_warnings_delegates_to_whichever_backend_was_last_used(self, monkeypatch):
+        backend, wiztree, native = self._make(monkeypatch, admin=True)
+        backend.scan("C:\\Users\\test")  # routes to native
+        assert backend.take_warnings() == ["warning:WindowsNative"]
+
+        backend.scan("C:\\")  # routes to wiztree
+        assert backend.take_warnings() == ["warning:WizTree"]
+
+    def test_advice_is_none_when_wiztree_was_actually_used(self, monkeypatch):
+        backend, _, _ = self._make(monkeypatch, admin=True)
+        backend.scan("C:\\")
+        assert backend.advice() is None
+
+    def test_advice_explains_the_skip_when_wiztree_available_but_not_used(self, monkeypatch):
+        backend, _, _ = self._make(monkeypatch, admin=True)
+        backend.scan("C:\\Users\\test")
+        advice = backend.advice()
+        assert advice is not None
+        assert "WizTree" in advice
+
+    def test_advice_before_any_call_defaults_to_the_skip_explanation(self, monkeypatch):
+        # _last starts pointed at native, matching "no call has proven a
+        # volume-root+elevated scope yet".
+        backend, _, _ = self._make(monkeypatch, admin=True)
+        assert backend.advice() is not None
+
+
+class TestIsVolumeRoot:
+    def test_drive_root_with_trailing_backslash(self):
+        assert scan_mod._is_volume_root("C:\\") is True
+
+    def test_drive_root_without_trailing_separator(self):
+        assert scan_mod._is_volume_root("D:") is True
+
+    def test_subdirectory_is_not_a_root(self):
+        assert scan_mod._is_volume_root("C:\\Users") is False
+        assert scan_mod._is_volume_root("C:\\Users\\test\\AppData") is False
+
+    def test_non_windows_shaped_path_is_not_a_root(self):
+        assert scan_mod._is_volume_root("/home/user") is False
