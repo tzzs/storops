@@ -121,14 +121,108 @@ def _try_fast_datetime(value: str) -> datetime | None:
     return None
 
 
+_UNINSTALL_SUBKEYS = (
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+    r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+)
+
+
+def _read_uninstall_entries(hive: int, subkey: str) -> list[tuple[str, str | None]]:
+    """(DisplayName, InstallLocation) for every entry directly under one
+    registry Uninstall key. Never raises -- a missing key, access-denied,
+    or a malformed individual entry all just mean "no data from here",
+    exactly like WizTree simply not being installed via its installer
+    (e.g. the portable/no-installer zip has no registry footprint at all).
+    """
+    import winreg
+
+    entries: list[tuple[str, str | None]] = []
+    try:
+        with winreg.OpenKey(hive, subkey) as uninstall_key:
+            count = winreg.QueryInfoKey(uninstall_key)[0]
+            for i in range(count):
+                try:
+                    sub_name = winreg.EnumKey(uninstall_key, i)
+                    with winreg.OpenKey(uninstall_key, sub_name) as entry:
+                        display_name = winreg.QueryValueEx(entry, "DisplayName")[0]
+                        try:
+                            install_location = winreg.QueryValueEx(entry, "InstallLocation")[0]
+                        except OSError:
+                            install_location = None
+                except OSError:
+                    continue
+                entries.append((display_name, install_location))
+    except OSError:
+        pass
+    return entries
+
+
+def _wiztree_install_locations(entries: list[tuple[str, str | None]]) -> list[str]:
+    """InstallLocation values from (DisplayName, InstallLocation) pairs
+    whose DisplayName looks like WizTree's -- case-insensitive, version-
+    agnostic prefix match ("WizTree v4.32" today, some other version
+    tomorrow), in the order given.
+    """
+    return [
+        location
+        for display_name, location in entries
+        if display_name and location and display_name.strip().lower().startswith("wiztree")
+    ]
+
+
+def _find_wiztree_via_registry() -> str | None:
+    """WizTree's installer (a standard Inno Setup build, confirmed live
+    against a real install) registers itself under the same Uninstall
+    registry key every "Add/Remove Programs" entry lives in, with an
+    InstallLocation value pointing at wherever the user actually chose to
+    install it -- confirmed live: DisplayName "WizTree v4.32",
+    InstallLocation "D:\\apps\\wiztree\\", neither on PATH nor under any of
+    the %ProgramFiles%/%LOCALAPPDATA% guesses below. That guessing only
+    covers a handful of conventional drive-C locations; a real install on
+    another drive or a custom folder (both common -- an installer always
+    lets you pick the destination) was invisible to find_wiztree() before
+    this, forcing a manual $env:STOROPS_WIZTREE_PATH every time. This is
+    the same mechanism Windows' own "installed apps" list uses, so it
+    finds an install regardless of which drive/folder was chosen.
+
+    HKEY_CURRENT_USER is checked too for a per-user (not "for all users")
+    install; WOW6432Node covers a 32-bit build's registry redirection on
+    64-bit Windows. winreg doesn't exist on non-Windows platforms --
+    imported lazily inside _read_uninstall_entries() so this module stays
+    importable (and its cross-platform tests collectable) everywhere.
+    """
+    try:
+        import winreg
+    except ImportError:
+        return None
+
+    roots = [(winreg.HKEY_LOCAL_MACHINE, subkey) for subkey in _UNINSTALL_SUBKEYS]
+    roots.append((winreg.HKEY_CURRENT_USER, _UNINSTALL_SUBKEYS[0]))
+
+    for hive, subkey in roots:
+        entries = _read_uninstall_entries(hive, subkey)
+        for install_location in _wiztree_install_locations(entries):
+            for name in ("WizTree64.exe", "WizTree.exe"):
+                candidate = os.path.join(install_location, name)
+                if os.path.isfile(candidate):
+                    return candidate
+
+    return None
+
+
 def find_wiztree() -> str | None:
     """Locate the WizTree CLI executable, in priority order:
 
     1. $STOROPS_WIZTREE_PATH (a full path to the exe, or a directory to
        search within it for WizTree64.exe/WizTree.exe).
     2. WizTree64.exe / WizTree.exe on PATH.
-    3. Well-known install locations under %ProgramFiles%,
-       %ProgramFiles(x86)%, %LOCALAPPDATA%\\WizTree.
+    3. The install location WizTree's own installer recorded in the
+       Windows registry (see _find_wiztree_via_registry()) -- covers an
+       install on any drive/folder, not just the conventional ones below.
+    4. Well-known install locations under %ProgramFiles%,
+       %ProgramFiles(x86)%, %LOCALAPPDATA%\\WizTree (a last-resort guess;
+       mainly still useful for the portable/no-installer zip, which has no
+       registry entry to find in step 3).
 
     Returns None (rather than raising) when nothing is found -- unlike the
     old PowerShell Get-StorOpsWizTreePath, which threw. The Python caller
@@ -150,6 +244,10 @@ def find_wiztree() -> str | None:
         found = shutil.which(name)
         if found:
             return found
+
+    from_registry = _find_wiztree_via_registry()
+    if from_registry:
+        return from_registry
 
     roots = [
         os.environ.get("ProgramFiles"),

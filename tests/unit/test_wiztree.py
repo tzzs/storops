@@ -1,17 +1,19 @@
 """Unit tests for storops.platform.backends.wiztree.
 
-These are the highest-value tests possible without a real Windows machine
-+ WizTree install: they lock down (a) the exact argument list passed to
-subprocess.run (catches argument-order/typo bugs) and (b) the CSV parser
-against hand-written fixtures, including one with a non-English (Chinese)
-header row to prove the structural header-detection trick works without
-matching English header text. None of this exercises the real WizTree
-binary -- that part is unverified, as noted in the module docstring and
-this task's final report.
+Originally written to be the highest-value tests possible without a real
+Windows machine + WizTree install: locking down (a) the exact argument
+list passed to subprocess.run (catches argument-order/typo bugs) and (b)
+the CSV parser against hand-written fixtures, including one with a
+non-English (Chinese) header row to prove the structural header-detection
+trick works without matching English header text. Since verified live
+against a real WizTree 4.32 install -- see the module docstring and
+test_real_export_banner_line_and_extra_drive_columns below.
 """
 from __future__ import annotations
 
 import subprocess
+import sys
+import types
 from datetime import datetime
 from pathlib import Path
 
@@ -49,6 +51,9 @@ class TestFindWizTree:
     def test_falls_back_to_well_known_paths(self, tmp_path, monkeypatch):
         monkeypatch.delenv("STOROPS_WIZTREE_PATH", raising=False)
         monkeypatch.setattr(wiztree_mod.shutil, "which", lambda name: None)
+        # Isolate this tier from whatever WizTree registry entry may or may
+        # not genuinely exist on the machine running this test.
+        monkeypatch.setattr(wiztree_mod, "_find_wiztree_via_registry", lambda: None)
         program_files = tmp_path / "ProgramFiles"
         (program_files / "WizTree").mkdir(parents=True)
         (program_files / "WizTree" / "WizTree.exe").write_text("")
@@ -60,10 +65,170 @@ class TestFindWizTree:
     def test_nothing_found_returns_none(self, monkeypatch):
         monkeypatch.delenv("STOROPS_WIZTREE_PATH", raising=False)
         monkeypatch.setattr(wiztree_mod.shutil, "which", lambda name: None)
+        monkeypatch.setattr(wiztree_mod, "_find_wiztree_via_registry", lambda: None)
         monkeypatch.delenv("ProgramFiles", raising=False)
         monkeypatch.delenv("ProgramFiles(x86)", raising=False)
         monkeypatch.delenv("LOCALAPPDATA", raising=False)
         assert wiztree_mod.find_wiztree() is None
+
+    def test_registry_tier_used_when_path_and_well_known_folders_miss(self, tmp_path, monkeypatch):
+        # find_wiztree()'s priority order: env var > PATH > registry >
+        # well-known folders. An install the installer put on a
+        # non-conventional drive/folder (confirmed live: a real WizTree
+        # install at "D:\apps\wiztree\", found by neither PATH nor any
+        # %ProgramFiles%/%LOCALAPPDATA% guess) is exactly what step 3
+        # exists for.
+        monkeypatch.delenv("STOROPS_WIZTREE_PATH", raising=False)
+        monkeypatch.setattr(wiztree_mod.shutil, "which", lambda name: None)
+        monkeypatch.delenv("ProgramFiles", raising=False)
+        monkeypatch.delenv("ProgramFiles(x86)", raising=False)
+        monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+        install_dir = tmp_path / "apps" / "wiztree"
+        install_dir.mkdir(parents=True)
+        (install_dir / "WizTree64.exe").write_text("")
+        monkeypatch.setattr(wiztree_mod, "_find_wiztree_via_registry", lambda: str(install_dir / "WizTree64.exe"))
+
+        assert wiztree_mod.find_wiztree() == str(install_dir / "WizTree64.exe")
+
+    def test_path_tier_wins_over_registry(self, monkeypatch):
+        monkeypatch.delenv("STOROPS_WIZTREE_PATH", raising=False)
+        monkeypatch.setattr(wiztree_mod.shutil, "which", lambda name: "C:\\OnPath\\WizTree64.exe" if name == "WizTree64.exe" else None)
+        monkeypatch.setattr(wiztree_mod, "_find_wiztree_via_registry", lambda: "D:\\FromRegistry\\WizTree64.exe")
+        assert wiztree_mod.find_wiztree() == "C:\\OnPath\\WizTree64.exe"
+
+
+class TestFindWizTreeViaRegistry:
+    """_find_wiztree_via_registry()'s own logic, isolated from the real
+    Windows registry via monkeypatched _read_uninstall_entries() so these
+    run identically regardless of what is actually installed on the
+    machine executing the tests.
+    """
+
+    def test_matches_display_name_case_insensitively_and_version_agnostic(self):
+        entries = [
+            ("Some Other App", "C:\\Other"),
+            ("WizTree v4.32", "D:\\apps\\wiztree\\"),
+            (None, None),
+            ("", "C:\\Blank"),
+        ]
+        assert wiztree_mod._wiztree_install_locations(entries) == ["D:\\apps\\wiztree\\"]
+
+    def test_entry_with_no_install_location_is_skipped(self):
+        entries = [("WizTree v4.32", None)]
+        assert wiztree_mod._wiztree_install_locations(entries) == []
+
+    def test_checks_all_three_registry_roots(self, tmp_path, monkeypatch):
+        # Three roots are consulted: HKLM native, HKLM WOW6432Node (32-bit
+        # redirection), HKCU (a per-user, not "for all users", install).
+        # A match found only in the last one checked must still work.
+        install_dir = tmp_path / "wiztree"
+        install_dir.mkdir()
+        (install_dir / "WizTree.exe").write_text("")
+
+        calls: list[tuple[object, str]] = []
+
+        def fake_read(hive, subkey):
+            calls.append((hive, subkey))
+            if len(calls) == 3:
+                return [("WizTree v4.32", str(install_dir))]
+            return []
+
+        monkeypatch.setattr(wiztree_mod, "_read_uninstall_entries", fake_read)
+        assert wiztree_mod._find_wiztree_via_registry() == str(install_dir / "WizTree.exe")
+        assert len(calls) == 3
+        # The two HKLM lookups share one hive value and use the documented
+        # native-then-WOW6432Node subkey order; HKCU uses a different hive.
+        assert calls[0][0] == calls[1][0]
+        assert calls[2][0] != calls[0][0]
+        assert calls[0][1] == wiztree_mod._UNINSTALL_SUBKEYS[0]
+        assert calls[1][1] == wiztree_mod._UNINSTALL_SUBKEYS[1]
+        assert calls[2][1] == wiztree_mod._UNINSTALL_SUBKEYS[0]
+
+    def test_install_location_recorded_but_exe_missing_is_not_a_match(self, tmp_path, monkeypatch):
+        # A stale/broken uninstall entry (e.g. the folder was moved/deleted
+        # by hand instead of via the uninstaller) must not be reported as
+        # found -- find_wiztree() falls through to its next tier instead.
+        monkeypatch.setattr(wiztree_mod, "_read_uninstall_entries", lambda hive, subkey: [("WizTree v4.32", str(tmp_path / "gone"))])
+        assert wiztree_mod._find_wiztree_via_registry() is None
+
+    def test_no_matching_entry_anywhere_returns_none(self, monkeypatch):
+        monkeypatch.setattr(wiztree_mod, "_read_uninstall_entries", lambda hive, subkey: [("Notepad++", "C:\\Notepad++")])
+        assert wiztree_mod._find_wiztree_via_registry() is None
+
+
+class _FakeRegKey:
+    """Minimal winreg-key-handle stand-in: a context manager wrapping
+    either a list of child subkey names (the top-level Uninstall key) or a
+    dict of value-name -> value (one uninstall entry)."""
+
+    def __init__(self, subkey_names=None, values=None):
+        self.subkey_names = subkey_names or []
+        self.values = values or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+class TestReadUninstallEntries:
+    """_read_uninstall_entries()'s own winreg call sequence, verified
+    against a fake `winreg` module injected via sys.modules -- winreg
+    doesn't exist on non-Windows platforms, so this keeps the test (and
+    module import) collectible everywhere despite exercising the exact
+    OpenKey/QueryInfoKey/EnumKey/QueryValueEx sequence used against the
+    real registry (confirmed live on a real Windows machine separately).
+    """
+
+    def _install_fake_winreg(self, monkeypatch, top_key: _FakeRegKey, entries: dict[str, _FakeRegKey]) -> None:
+        def query_value_ex(key: _FakeRegKey, name: str):
+            if name not in key.values:
+                raise OSError(f"no such value: {name}")
+            return (key.values[name], 1)
+
+        fake = types.SimpleNamespace(
+            OpenKey=lambda hive, subkey: entries[subkey] if subkey in entries else top_key,
+            QueryInfoKey=lambda key: (len(key.subkey_names), 0, 0),
+            EnumKey=lambda key, i: key.subkey_names[i],
+            QueryValueEx=query_value_ex,
+        )
+        monkeypatch.setitem(sys.modules, "winreg", fake)
+
+    def test_reads_display_name_and_install_location_per_entry(self, monkeypatch):
+        top = _FakeRegKey(subkey_names=["WizTree_is1", "Other_is1"])
+        entries = {
+            "WizTree_is1": _FakeRegKey(values={"DisplayName": "WizTree v4.32", "InstallLocation": "D:\\apps\\wiztree\\"}),
+            "Other_is1": _FakeRegKey(values={"DisplayName": "Other App"}),  # no InstallLocation value at all
+        }
+        self._install_fake_winreg(monkeypatch, top, entries)
+
+        result = wiztree_mod._read_uninstall_entries(hive=1, subkey="Uninstall")
+        assert result == [
+            ("WizTree v4.32", "D:\\apps\\wiztree\\"),
+            ("Other App", None),
+        ]
+
+    def test_missing_key_returns_empty_list_not_an_error(self, monkeypatch):
+        def raise_open_key(hive, subkey):
+            raise OSError("key not found")
+
+        monkeypatch.setitem(sys.modules, "winreg", types.SimpleNamespace(OpenKey=raise_open_key))
+        assert wiztree_mod._read_uninstall_entries(hive=1, subkey="Uninstall") == []
+
+    def test_one_malformed_entry_does_not_abort_the_rest(self, monkeypatch):
+        # An entry with no DisplayName at all (QueryValueEx raises) must be
+        # skipped, not crash the whole scan of sibling entries.
+        top = _FakeRegKey(subkey_names=["Broken_is1", "WizTree_is1"])
+        entries = {
+            "Broken_is1": _FakeRegKey(values={}),
+            "WizTree_is1": _FakeRegKey(values={"DisplayName": "WizTree v4.32", "InstallLocation": "D:\\apps\\wiztree\\"}),
+        }
+        self._install_fake_winreg(monkeypatch, top, entries)
+
+        result = wiztree_mod._read_uninstall_entries(hive=1, subkey="Uninstall")
+        assert result == [("WizTree v4.32", "D:\\apps\\wiztree\\")]
 
 
 class TestParseWizTreeCsv:
