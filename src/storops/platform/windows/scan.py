@@ -18,6 +18,7 @@ storops.platform.backends.wiztree. This module provides:
 """
 from __future__ import annotations
 
+import concurrent.futures
 import fnmatch
 import os
 import shutil
@@ -66,6 +67,48 @@ def _name_matches(name: str, name_filter: str | None, name_exclude: str | None) 
     if name_exclude and fnmatch.fnmatch(lowered, name_exclude.lower()):
         return False
     return True
+
+
+def _stat_file_child(
+    child: os.DirEntry,
+    *,
+    export_files: bool,
+    name_filter: str | None,
+    name_exclude: str | None,
+    warnings: list[ScanWarning],
+) -> tuple[int, int, datetime | None, Entry | None] | None:
+    """Stat one non-directory scandir entry: (size, allocated, mtime,
+    export-entry-or-None). None means the stat itself failed -- caller
+    must skip this child entirely (no size/count contribution), matching
+    a directory that raises PermissionError/OSError. Shared by _walk() and
+    _walk_root() so both apply identical file-handling logic.
+    """
+    try:
+        st = child.stat(follow_symlinks=False)
+    except PermissionError as exc:
+        warnings.append(ScanWarning(path=child.path, code="permission_denied", message=str(exc)))
+        return None
+    except OSError as exc:
+        warnings.append(ScanWarning(path=child.path, code="scan_error", message=str(exc)))
+        return None
+
+    allocated = _allocated_bytes(st)
+    try:
+        mtime = datetime.fromtimestamp(st.st_mtime)
+    except (OSError, OverflowError, ValueError) as exc:
+        warnings.append(ScanWarning(path=child.path, code="scan_error", message=str(exc)))
+        mtime = None
+
+    entry = None
+    if export_files and _name_matches(child.name, name_filter, name_exclude):
+        entry = Entry(
+            full_name=child.path,
+            is_folder=False,
+            size_bytes=st.st_size,
+            allocated_bytes=allocated,
+            modified=mtime,
+        )
+    return st.st_size, allocated, mtime, entry
 
 
 def _walk(
@@ -155,34 +198,158 @@ def _walk(
                     )
                 )
         else:
-            try:
-                st = child.stat(follow_symlinks=False)
-            except PermissionError as exc:
-                warnings.append(ScanWarning(path=child.path, code="permission_denied", message=str(exc)))
+            result = _stat_file_child(
+                child,
+                export_files=export_files,
+                name_filter=name_filter,
+                name_exclude=name_exclude,
+                warnings=warnings,
+            )
+            if result is None:
                 continue
+            size, allocated, mtime, entry = result
+            file_count += 1
+            total_size += size
+            total_allocated += allocated
+            if mtime is not None and (latest_mtime is None or mtime > latest_mtime):
+                latest_mtime = mtime
+            if within_depth and entry is not None:
+                out.append(entry)
+
+    return total_size, total_allocated, file_count, folder_count, latest_mtime
+
+
+_DEFAULT_PARALLEL_WORKERS = 8
+
+
+def _walk_root(
+    path: str,
+    *,
+    max_depth: int,
+    export_folders: bool,
+    export_files: bool,
+    name_filter: str | None,
+    name_exclude: str | None,
+    warnings: list[ScanWarning],
+    out: list[Entry],
+    max_workers: int = _DEFAULT_PARALLEL_WORKERS,
+) -> tuple[int, int, int, int, datetime | None]:
+    """Entry point for WindowsNativeBackend.scan(): splits the scan root's
+    immediate subdirectories across a thread pool, then walks each with the
+    ordinary sequential _walk(). os.scandir()/DirEntry.stat() release the
+    GIL for their underlying syscall, and on Windows each call already pays
+    real per-call latency (filesystem-filter/AV interception) independent
+    of CPU work, so a scan is mostly threads waiting on I/O -- exactly the
+    case a thread pool helps with despite the GIL.
+
+    Only this top level is split; every subdirectory's contents are then
+    walked sequentially via plain _walk() recursion. A worker task must
+    never submit more work to this same bounded pool: if every worker were
+    blocked on a `.result()` for a child future while no free worker
+    remains to run it, the pool deadlocks. Splitting one level down and
+    staying sequential thereafter sidesteps that entirely, at the cost of
+    a real limitation: a scan dominated by one huge immediate subdirectory
+    (e.g. C:\\Users on a `C:\\` scan) sees a much smaller speedup than one
+    with several similarly-sized subdirectories, since that one dominant
+    subdirectory still runs start-to-finish on a single thread.
+
+    Merges results back in the original os.scandir() order (not thread
+    completion order) so `out` matches the sequential backend entry-for-
+    entry -- not required for correctness (nothing downstream depends on
+    scan() row order; callers sort explicitly), but makes orig-vs-patched
+    diffing straightforward.
+    """
+    try:
+        children = list(os.scandir(path))
+    except PermissionError as exc:
+        warnings.append(ScanWarning(path=path, code="permission_denied", message=str(exc)))
+        return 0, 0, 0, 0, None
+    except OSError as exc:
+        warnings.append(ScanWarning(path=path, code="scan_error", message=str(exc)))
+        return 0, 0, 0, 0, None
+
+    within_depth = max_depth == 0 or 1 <= max_depth
+
+    total_size = 0
+    total_allocated = 0
+    file_count = 0
+    folder_count = 0
+    latest_mtime: datetime | None = None
+
+    # One slot per scandir()-ordered child, resolved in that same order
+    # below regardless of which future finished first.
+    slots: list[tuple] = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for child in children:
+            try:
+                is_dir = child.is_dir(follow_symlinks=False)
             except OSError as exc:
                 warnings.append(ScanWarning(path=child.path, code="scan_error", message=str(exc)))
                 continue
 
-            file_count += 1
-            total_size += st.st_size
-            allocated = _allocated_bytes(st)
-            total_allocated += allocated
-            try:
-                mtime = datetime.fromtimestamp(st.st_mtime)
-            except (OSError, OverflowError, ValueError) as exc:
-                warnings.append(ScanWarning(path=child.path, code="scan_error", message=str(exc)))
-                mtime = None
-            if mtime is not None and (latest_mtime is None or mtime > latest_mtime):
-                latest_mtime = mtime
-            if within_depth and export_files and _name_matches(child.name, name_filter, name_exclude):
+            if not is_dir:
+                slots.append(("file", child))
+                continue
+
+            sub_warnings: list[ScanWarning] = []
+            sub_out: list[Entry] = []
+            future = pool.submit(
+                _walk,
+                child.path,
+                depth=1,
+                max_depth=max_depth,
+                export_folders=export_folders,
+                export_files=export_files,
+                name_filter=name_filter,
+                name_exclude=name_exclude,
+                warnings=sub_warnings,
+                out=sub_out,
+            )
+            slots.append(("dir", child, future, sub_warnings, sub_out))
+
+        for slot in slots:
+            if slot[0] == "file":
+                _, child = slot
+                result = _stat_file_child(
+                    child,
+                    export_files=export_files,
+                    name_filter=name_filter,
+                    name_exclude=name_exclude,
+                    warnings=warnings,
+                )
+                if result is None:
+                    continue
+                size, allocated, mtime, entry = result
+                file_count += 1
+                total_size += size
+                total_allocated += allocated
+                if mtime is not None and (latest_mtime is None or mtime > latest_mtime):
+                    latest_mtime = mtime
+                if within_depth and entry is not None:
+                    out.append(entry)
+                continue
+
+            _, child, future, sub_warnings, sub_out = slot
+            sub_size, sub_alloc, sub_files, sub_folders, sub_mtime = future.result()
+            warnings.extend(sub_warnings)
+            out.extend(sub_out)
+            total_size += sub_size
+            total_allocated += sub_alloc
+            file_count += sub_files
+            folder_count += 1 + sub_folders
+            if sub_mtime and (latest_mtime is None or sub_mtime > latest_mtime):
+                latest_mtime = sub_mtime
+            if within_depth and export_folders and _name_matches(child.name, name_filter, name_exclude):
                 out.append(
                     Entry(
                         full_name=child.path,
-                        is_folder=False,
-                        size_bytes=st.st_size,
-                        allocated_bytes=allocated,
-                        modified=mtime,
+                        is_folder=True,
+                        size_bytes=sub_size,
+                        allocated_bytes=sub_alloc,
+                        modified=sub_mtime,
+                        file_count=sub_files,
+                        folder_count=sub_folders,
                     )
                 )
 
@@ -218,9 +385,8 @@ class WindowsNativeBackend:
         self._warnings = []
         target = resolve_path(path)
         out: list[Entry] = []
-        _walk(
+        _walk_root(
             target,
-            depth=0,
             max_depth=max_depth,
             export_folders=export_folders,
             export_files=export_files,

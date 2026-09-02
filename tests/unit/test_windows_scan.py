@@ -108,6 +108,113 @@ class TestWindowsNativeBackendScan:
         # The readable sibling file is still reported.
         assert any(e.full_name == str(root / "ok.txt") for e in entries)
 
+    def test_root_level_directories_are_aggregated_correctly(self, tmp_path):
+        # Several immediate root subdirectories plus a root-level file --
+        # scan() splits exactly this shape (root's immediate children)
+        # across a thread pool (see _walk_root() in platform/windows/scan.py),
+        # so this exercises the real parallel-merge path, not just a single
+        # sequential _walk().
+        root = tmp_path / "root"
+        (root / "a" / "sub").mkdir(parents=True)
+        (root / "b").mkdir(parents=True)
+        (root / "c").mkdir(parents=True)
+        (root / "root_file.txt").write_bytes(b"x" * 5)
+        (root / "a" / "f1.bin").write_bytes(b"1" * 10)
+        (root / "a" / "sub" / "f2.bin").write_bytes(b"2" * 20)
+        (root / "b" / "f3.bin").write_bytes(b"3" * 30)
+        # "c" stays empty -- an immediate subdirectory with nothing inside
+        # must still show up with zeroed aggregates, not be dropped.
+
+        backend = WindowsNativeBackend()
+        entries = backend.scan(str(root), export_folders=True, export_files=True, max_depth=0)
+        by_name = {e.full_name: e for e in entries}
+
+        a = by_name[str(root / "a")]
+        assert a.size_bytes == 30  # f1.bin + sub/f2.bin
+        assert a.file_count == 2
+        assert a.folder_count == 1
+
+        assert by_name[str(root / "a" / "sub")].size_bytes == 20
+        assert by_name[str(root / "b")].size_bytes == 30
+        c = by_name[str(root / "c")]
+        assert c.size_bytes == 0
+        assert c.file_count == 0
+        assert by_name[str(root / "root_file.txt")].size_bytes == 5
+
+    def test_more_root_subdirectories_than_thread_pool_workers(self, tmp_path):
+        # _walk_root() uses a bounded (8-worker) pool; more root-level
+        # subdirectories than that must still all be scanned (the pool
+        # queues the rest), not silently dropped or deadlocked.
+        root = tmp_path / "root"
+        for i in range(12):
+            d = root / f"dir{i:02d}"
+            d.mkdir(parents=True)
+            (d / "f.bin").write_bytes(bytes([i]) * (i + 1))
+
+        backend = WindowsNativeBackend()
+        entries = backend.scan(str(root), export_folders=True, export_files=True, max_depth=0)
+        by_name = {e.full_name: e for e in entries}
+
+        assert len([e for e in entries if e.is_folder]) == 12
+        for i in range(12):
+            assert by_name[str(root / f"dir{i:02d}")].size_bytes == i + 1
+
+    def test_permission_error_in_one_root_subdirectory_does_not_affect_siblings(self, tmp_path, monkeypatch):
+        root = tmp_path / "root"
+        locked = root / "locked"
+        locked.mkdir(parents=True)
+        ok_dir = root / "ok_dir"
+        ok_dir.mkdir(parents=True)
+        (ok_dir / "f.bin").write_bytes(b"x" * 7)
+
+        real_scandir = scan_mod.os.scandir
+
+        def fake_scandir(path):
+            if str(path) == str(locked):
+                raise PermissionError("denied")
+            return real_scandir(path)
+
+        monkeypatch.setattr(scan_mod.os, "scandir", fake_scandir)
+
+        backend = WindowsNativeBackend()
+        entries = backend.scan(str(root), export_folders=True, export_files=True, max_depth=0)
+
+        warnings = backend.take_warnings()
+        assert len(warnings) == 1
+        assert warnings[0].path == str(locked)
+        by_name = {e.full_name: e for e in entries}
+        assert by_name[str(ok_dir)].size_bytes == 7
+        assert by_name[str(ok_dir / "f.bin")].size_bytes == 7
+
+    def test_parallel_root_split_matches_plain_sequential_walk(self, tmp_path):
+        # _walk_root() (the parallel entry point WindowsNativeBackend.scan()
+        # uses) must produce the exact same entries -- as a set, since raw
+        # scandir() order is not itself a guarantee -- as calling the
+        # plain sequential _walk() directly, for a tree wide/deep enough to
+        # actually engage the thread pool across multiple root subdirectories.
+        root = tmp_path / "root"
+        for i in range(10):
+            d = root / f"d{i}"
+            (d / "nested").mkdir(parents=True)
+            (d / f"f{i}.bin").write_bytes(b"x" * (i + 1))
+            (d / "nested" / "deep.bin").write_bytes(b"y" * (i + 2))
+        (root / "top.txt").write_bytes(b"z" * 3)
+
+        def entry_key(e):
+            return (e.full_name, e.is_folder, e.size_bytes, e.allocated_bytes, e.file_count, e.folder_count)
+
+        sequential_out: list = []
+        scan_mod._walk(
+            str(root), depth=0, max_depth=0, export_folders=True, export_files=True,
+            name_filter=None, name_exclude=None, warnings=[], out=sequential_out,
+        )
+
+        backend = WindowsNativeBackend()
+        parallel_out = backend.scan(str(root), export_folders=True, export_files=True, max_depth=0)
+
+        assert {entry_key(e) for e in parallel_out} == {entry_key(e) for e in sequential_out}
+        assert len(parallel_out) == len(sequential_out)
+
     def test_corrupt_mtime_collected_as_warning_not_raised(self, tmp_path, monkeypatch):
         root = tmp_path / "root"
         root.mkdir()
