@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.0.5](https://github.com/tzzs/storops/compare/storops-v1.0.4...storops-v1.0.5) (2026-09-03)
+
+
+### Bug Fixes
+
+* **windows-scan:** only route to WizTree for a whole-volume, elevated scan ([7a8da14](https://github.com/tzzs/storops/commit/7a8da1450eb04f8684d479a1159639c76424c5ac))
+* **windows-scan:** remove flaky bare-drive-letter test for _is_volume_root ([7c5d4fc](https://github.com/tzzs/storops/commit/7c5d4fc1f52d9d7282fa584e0cfb2dbcb03aa5c5))
+* **wiztree:** find an install via its own registry entry, not just guesses ([3213c5c](https://github.com/tzzs/storops/commit/3213c5c1d9cfe546645702caf77817ac51e14441))
+
+
+### Performance Improvements
+
+* **copystats:** parallelize dir_stats() root-level traversal ([4c02cf8](https://github.com/tzzs/storops/commit/4c02cf86f2a15d8be108bf4bb06a65ccefe5ff1d))
+* **du:** skip per-row depth/basename work when it can't matter ([7bc4e9a](https://github.com/tzzs/storops/commit/7bc4e9aa4bdac2c0705db5dbf038b5e5a7d90a67))
+* **path-size:** stop scanning the parent directory to size one child ([1c6ec07](https://github.com/tzzs/storops/commit/1c6ec07e14fd8d83931f0ef2f7813f4b7874b2fa))
+* **rules:** cache token/pattern expansion in identify_path ([d54e6d6](https://github.com/tzzs/storops/commit/d54e6d61537a714d849fa4315215c59c769826e6))
+* **scan:** make search a real substitute for scan+N*inspect ([19e00cb](https://github.com/tzzs/storops/commit/19e00cb16f1f691091f49bb5be879822e68abe61))
+* **windows-scan:** parallelize root-level directory traversal ([ff3caea](https://github.com/tzzs/storops/commit/ff3caea3939f7701ae05c70ecd51dbf988ebb83b))
+* **windows:** cache rule matching, parallelize directory scan ([444c85e](https://github.com/tzzs/storops/commit/444c85e7a68901d7f8eba2863e6d4c7ca469455f))
+* **wiztree:** fast-path datetime parsing in CSV export ([2e7374e](https://github.com/tzzs/storops/commit/2e7374ef26df9bd089c28e4b2abc9ff2ddbff452))
+
 ## [1.0.4](https://github.com/tzzs/storops/compare/storops-v1.0.3...storops-v1.0.4) (2026-09-01)
 
 

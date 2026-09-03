@@ -1,7 +1,7 @@
 {
   "name": "storops",
   "description": "Storage Operations for AI Agents. Cross-platform (Windows, Linux, macOS): diagnose why a drive or volume is full, identify what specific applications/caches/AI-model files are consuming space, and safely clean up or migrate them -- with mandatory user confirmation before any write and verification after every migration.",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "author": {
     "name": "tzzs"
   },
