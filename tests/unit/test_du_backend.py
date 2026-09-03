@@ -85,6 +85,38 @@ class TestDuBackendIntegration:
             assert entry.size_bytes >= 500
             assert entry.size_bytes % 1024 == 0
 
+    def test_path_size_on_a_directory_sums_its_subtree(self, tmp_path):
+        root = self._make_tree(tmp_path)
+        backend = DuBackend()
+
+        entry = backend.path_size(str(root / "sub"))
+        assert entry is not None
+        assert entry.is_folder is True
+        if backend._du_flavor() == "gnu":
+            assert entry.size_bytes == 1000
+        else:
+            assert entry.size_bytes >= 1000
+
+    def test_path_size_does_not_touch_sibling_directories(self, tmp_path):
+        # Regression test: path_size() used to shell out to `du` against
+        # `target`'s *parent* and search for `target` in that output --
+        # meaning `du` itself walked every unrelated sibling on disk too
+        # whenever the parent happened to be large. It must now only ever
+        # target `path` itself.
+        root = tmp_path / "root"
+        target = root / "small"
+        target.mkdir(parents=True)
+        (target / "f.bin").write_bytes(b"x" * 5)
+        sibling = root / "huge_sibling"
+        sibling.mkdir()
+        (sibling / "big.bin").write_bytes(b"y" * 1_000_000)
+
+        backend = DuBackend()
+        entry = backend.path_size(str(target))
+        assert entry is not None
+        if backend._du_flavor() == "gnu":
+            assert entry.size_bytes == 5
+
     def test_path_size_returns_none_for_missing_path(self, tmp_path):
         backend = DuBackend()
         assert backend.path_size(str(tmp_path / "does-not-exist")) is None

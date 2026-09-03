@@ -283,18 +283,61 @@ class TestWindowsNativeBackendScan:
         assert len(top) == 1
         assert top[0].full_name == str(root / "big")
 
-    def test_path_size_finds_entry_via_parent_scan(self, tmp_path):
+    def test_path_size_computes_target_aggregate(self, tmp_path):
         root = tmp_path / "root"
         root.mkdir()
         target = root / "child"
-        target.mkdir()
+        (target / "nested").mkdir(parents=True)
         (target / "f.bin").write_bytes(b"x" * 7)
+        (target / "nested" / "g.bin").write_bytes(b"y" * 3)
 
         backend = WindowsNativeBackend()
         entry = backend.path_size(str(target))
         assert entry is not None
         assert entry.full_name == str(target)
-        assert entry.size_bytes == 7
+        assert entry.size_bytes == 10
+        assert entry.file_count == 2
+        assert entry.folder_count == 1
+
+    def test_path_size_does_not_touch_sibling_directories(self, tmp_path, monkeypatch):
+        # Regression test: path_size() used to scan `target`'s *parent*
+        # and search for `target` in that listing -- meaning a target
+        # whose parent has other, unrelated (and possibly huge) siblings
+        # paid for walking all of them too. It must now only ever touch
+        # `target`'s own subtree.
+        root = tmp_path / "root"
+        target = root / "small"
+        target.mkdir(parents=True)
+        (target / "f.bin").write_bytes(b"x" * 5)
+        sibling = root / "huge_sibling"
+        sibling.mkdir()
+        (sibling / "big.bin").write_bytes(b"y" * 1000)
+
+        import storops.platform.windows.scan as scan_mod
+
+        real_scandir = scan_mod.os.scandir
+
+        def guarded_scandir(path):
+            if str(path) == str(sibling) or str(path) == str(root):
+                raise AssertionError(f"path_size() must not scan {path!r} -- only the target itself")
+            return real_scandir(path)
+
+        monkeypatch.setattr(scan_mod.os, "scandir", guarded_scandir)
+
+        backend = WindowsNativeBackend()
+        entry = backend.path_size(str(target))
+        assert entry is not None
+        assert entry.size_bytes == 5
+
+    def test_path_size_on_a_file_stats_it_directly(self, tmp_path):
+        f = tmp_path / "solo.bin"
+        f.write_bytes(b"x" * 42)
+
+        backend = WindowsNativeBackend()
+        entry = backend.path_size(str(f))
+        assert entry is not None
+        assert entry.is_folder is False
+        assert entry.size_bytes == 42
 
     def test_path_size_returns_none_for_missing_path(self, tmp_path):
         backend = WindowsNativeBackend()

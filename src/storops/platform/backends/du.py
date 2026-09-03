@@ -186,19 +186,46 @@ class DuBackend:
         return entries[:top]
 
     def path_size(self, path: str, *, admin: bool = False) -> Entry | None:
-        normalized = resolve_path(path)
-        if not os.path.exists(normalized):
-            return None
-        parent = os.path.dirname(normalized)
-        if not parent or parent == normalized:
+        """Aggregate size for `path` itself via `du -s` (summary: one
+        total for exactly this target, no per-file enumeration) -- NOT by
+        scanning `path`'s parent directory with `-a` and searching for
+        `path` in that listing, which this used to do. That meant `du`
+        itself walked every unrelated sibling on disk too whenever the
+        parent happened to be large, for no benefit (see
+        platform/windows/scan.py's WindowsNativeBackend.path_size(),
+        which had the identical anti-pattern and was measured costing
+        ~76s/~2.7M stat() calls for a single storops cleanup plan run on
+        a real machine, walking most of a drive to size two directories).
+        """
+        target = resolve_path(path)
+        if not os.path.exists(target):
             return None
 
-        for entry in self.scan(
-            parent, export_folders=True, export_files=True, max_depth=1, admin=admin
-        ):
-            if entry.full_name == normalized:
-                return entry
-        return None
+        flavor = self._du_flavor()
+        args = ["du", "-s", "-b" if flavor == "gnu" else "-k", "--", target]
+        proc = subprocess.run(args, capture_output=True, text=True)
+        if proc.returncode != 0 and not proc.stdout:
+            return None
+
+        line = next((l for l in proc.stdout.splitlines() if l), None)
+        if not line:
+            return None
+        parts = line.split("\t", 1)
+        if len(parts) < 2:
+            return None
+
+        size = int(parts[0])
+        if flavor != "gnu":
+            size *= 1024
+        return Entry(
+            full_name=target,
+            is_folder=os.path.isdir(target),
+            size_bytes=size,
+            allocated_bytes=size,
+            modified=None,
+            file_count=None,
+            folder_count=None,
+        )
 
     def advice(self) -> str | None:
         return _DU_FALLBACK_ADVICE

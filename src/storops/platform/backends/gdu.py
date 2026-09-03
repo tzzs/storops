@@ -165,6 +165,58 @@ def _process_dir(
     return total_asize, total_dsize, direct_file_count, direct_folder_count
 
 
+def _run_gdu_export(exe: str, target: str) -> list:
+    """Run gdu against `target` directly and return its raw JSON tree
+    ([rootDirInfo, child1, child2, ...] -- see module docstring). Shared
+    by scan() and path_size(): both need "gdu rooted at exactly this
+    target", never at some other directory.
+    """
+    fd, out_file = tempfile.mkstemp(suffix=".json", prefix="storops-gdu-")
+    os.close(fd)
+    os.remove(out_file)  # gdu must create it fresh
+
+    try:
+        # -n: no ANSI color codes in any incidental output. -o: write
+        # the JSON export and exit instead of opening the interactive TUI.
+        try:
+            subprocess.run(
+                [exe, "-n", "-o", out_file, target],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise StoropsError(
+                f"StorOps: gdu did not finish scanning '{target}' within 300 seconds."
+            ) from exc
+
+        if not os.path.isfile(out_file):
+            raise StoropsError(
+                f"StorOps: gdu exited without producing an export for '{target}'. "
+                "Confirm the path exists and is readable (re-run the whole command "
+                "under sudo for permission-denied subtrees -- StorOps never self-elevates)."
+            )
+
+        with open(out_file, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+
+        # [schemaVersion, someFlag, metaInfo, tree] -- tree is
+        # [rootDirInfo, child1, child2, ...]; see module docstring.
+        tree = raw[3]
+        if not isinstance(tree, list) or not tree:
+            raise StoropsError(
+                f"StorOps: gdu's JSON export for '{target}' did not have the expected "
+                f"[schemaVersion, flags, meta, [rootInfo, ...children]] shape."
+            )
+        return tree
+    finally:
+        if os.path.isfile(out_file):
+            try:
+                os.remove(out_file)
+            except OSError:
+                pass
+
+
 class GduBackend:
     """ScanBackend implementation shelling out to the `gdu` binary."""
 
@@ -190,73 +242,28 @@ class GduBackend:
         if not os.path.exists(target):
             raise InvalidPathError(f"StorOps: '{target}' does not exist.")
 
-        fd, out_file = tempfile.mkstemp(suffix=".json", prefix="storops-gdu-")
-        os.close(fd)
-        os.remove(out_file)  # gdu must create it fresh
+        tree = _run_gdu_export(exe, target)
+        entries: list[Entry] = []
+        _process_dir(
+            tree,
+            target,
+            0,
+            max_depth=max_depth,
+            export_folders=export_folders,
+            export_files=export_files,
+            collected=entries,
+        )
 
-        try:
-            # -n: no ANSI color codes in any incidental output. -o: write
-            # the JSON export and exit instead of opening the interactive TUI.
-            try:
-                subprocess.run(
-                    [exe, "-n", "-o", out_file, target],
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                )
-            except subprocess.TimeoutExpired as exc:
-                raise StoropsError(
-                    f"StorOps: gdu did not finish scanning '{target}' within 300 seconds."
-                ) from exc
+        # gdu has no native per-file name filter (only directory-exclude
+        # via -i, not used here); apply name_filter/name_exclude
+        # client-side against each entry's leaf name, matching the
+        # PowerShell version's approach.
+        if name_filter:
+            entries = [e for e in entries if fnmatch(os.path.basename(e.full_name), name_filter)]
+        if name_exclude:
+            entries = [e for e in entries if not fnmatch(os.path.basename(e.full_name), name_exclude)]
 
-            if not os.path.isfile(out_file):
-                raise StoropsError(
-                    f"StorOps: gdu exited without producing an export for '{target}'. "
-                    "Confirm the path exists and is readable (re-run the whole command "
-                    "under sudo for permission-denied subtrees -- StorOps never self-elevates)."
-                )
-
-            with open(out_file, "r", encoding="utf-8") as fh:
-                raw = json.load(fh)
-
-            # [schemaVersion, someFlag, metaInfo, tree] -- tree is
-            # [rootDirInfo, child1, child2, ...]; see module docstring.
-            tree = raw[3]
-            if not isinstance(tree, list) or not tree:
-                raise StoropsError(
-                    f"StorOps: gdu's JSON export for '{target}' did not have the expected "
-                    f"[schemaVersion, flags, meta, [rootInfo, ...children]] shape."
-                )
-
-            entries: list[Entry] = []
-            _process_dir(
-                tree,
-                target,
-                0,
-                max_depth=max_depth,
-                export_folders=export_folders,
-                export_files=export_files,
-                collected=entries,
-            )
-
-            # gdu has no native per-file name filter (only directory-exclude
-            # via -i, not used here); apply name_filter/name_exclude
-            # client-side against each entry's leaf name, matching the
-            # PowerShell version's approach.
-            if name_filter:
-                entries = [e for e in entries if fnmatch(os.path.basename(e.full_name), name_filter)]
-            if name_exclude:
-                entries = [
-                    e for e in entries if not fnmatch(os.path.basename(e.full_name), name_exclude)
-                ]
-
-            return entries
-        finally:
-            if os.path.isfile(out_file):
-                try:
-                    os.remove(out_file)
-                except OSError:
-                    pass
+        return entries
 
     def top_entries(
         self,
@@ -278,19 +285,42 @@ class GduBackend:
         return entries[:top]
 
     def path_size(self, path: str, *, admin: bool = False) -> Entry | None:
-        normalized = resolve_path(path)
-        if not os.path.exists(normalized):
-            return None
-        parent = os.path.dirname(normalized)
-        if not parent or parent == normalized:
+        """Aggregate size/count for `path` itself, from a gdu export
+        rooted at `path` directly -- NOT by exporting `path`'s *parent*
+        and searching for `path` in that listing, which this used to do.
+        See platform/windows/scan.py's WindowsNativeBackend.path_size()
+        for the measured real-world cost of that same anti-pattern on a
+        different backend: ~76s/~2.7M stat() calls to size two small
+        directories, because their shared parent happened to be huge.
+        """
+        target = resolve_path(path)
+        if not os.path.exists(target):
             return None
 
-        for entry in self.scan(
-            parent, export_folders=True, export_files=True, max_depth=1, admin=admin
-        ):
-            if entry.full_name == normalized:
-                return entry
-        return None
+        if not os.path.isdir(target):
+            try:
+                st = os.stat(target)
+            except OSError:
+                return None
+            return Entry(
+                full_name=target, is_folder=False, size_bytes=st.st_size,
+                allocated_bytes=st.st_size, modified=None,
+            )
+
+        exe = _resolve_gdu_path()
+        tree = _run_gdu_export(exe, target)
+        total_asize, total_dsize, file_count, folder_count = _process_dir(
+            tree, target, 0, max_depth=0, export_folders=False, export_files=False, collected=[]
+        )
+        return Entry(
+            full_name=target,
+            is_folder=True,
+            size_bytes=total_asize,
+            allocated_bytes=total_dsize,
+            modified=None,
+            file_count=file_count,
+            folder_count=folder_count,
+        )
 
     def advice(self) -> str | None:
         # gdu is the recommended backend for this platform -- nothing to

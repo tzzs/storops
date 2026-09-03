@@ -549,17 +549,59 @@ class WindowsNativeBackend:
         return sorted(entries, key=lambda e: e.size_bytes, reverse=True)[:top]
 
     def path_size(self, path: str, *, admin: bool = False) -> Entry | None:
+        """Aggregate size/count for `path` itself, computed by walking
+        `path`'s own subtree directly (via _walk_root(), so this still
+        gets the same root-level parallel split) -- NOT by scanning its
+        parent directory and searching for `path` in that listing, which
+        this used to do. That meant probing a directory whose *parent*
+        happens to be huge (e.g. "C:\\Windows\\Temp", parent "C:\\Windows")
+        walked every unrelated sibling too, real-world measured at ~2.7M
+        stat() calls (~76s) for a single storops cleanup plan run -- most
+        of a full drive's worth of work to size two small directories.
+        """
         target = resolve_path(path)
         if not os.path.exists(target):
             return None
-        parent = os.path.dirname(target)
-        if not parent or parent == target:
-            return None
-        entries = self.scan(parent, export_folders=True, export_files=True, max_depth=1)
-        for entry in entries:
-            if entry.full_name == target:
-                return entry
-        return None
+
+        self._warnings = []
+        if not os.path.isdir(target):
+            try:
+                st = os.stat(target, follow_symlinks=False)
+            except OSError as exc:
+                self._warnings.append(ScanWarning(path=target, code="scan_error", message=str(exc)))
+                return None
+            try:
+                mtime = datetime.fromtimestamp(st.st_mtime)
+            except (OSError, OverflowError, ValueError):
+                mtime = None
+            return Entry(
+                full_name=target,
+                is_folder=False,
+                size_bytes=st.st_size,
+                allocated_bytes=_allocated_bytes(st),
+                modified=mtime,
+            )
+
+        out: list[Entry] = []
+        size, allocated, file_count, folder_count, mtime = _walk_root(
+            target,
+            max_depth=0,
+            export_folders=False,
+            export_files=False,
+            name_filter=None,
+            name_exclude=None,
+            warnings=self._warnings,
+            out=out,
+        )
+        return Entry(
+            full_name=target,
+            is_folder=True,
+            size_bytes=size,
+            allocated_bytes=allocated,
+            modified=mtime,
+            file_count=file_count,
+            folder_count=folder_count,
+        )
 
     def advice(self) -> str | None:
         return (
