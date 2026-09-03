@@ -489,8 +489,14 @@ class TestIsVolumeRoot:
     def test_drive_root_with_trailing_backslash(self):
         assert scan_mod._is_volume_root("C:\\") is True
 
-    def test_drive_root_without_trailing_separator(self):
-        assert scan_mod._is_volume_root("D:") is True
+    # A bare drive letter with no trailing separator ("D:") is deliberately
+    # not covered here: ntpath.isabs("D:") is False (it's a drive-relative
+    # path, not an absolute one), so ntpath.abspath("D:") resolves against
+    # that drive's own remembered current directory -- real Windows,
+    # per-process, per-drive state that isn't reproducible from a test.
+    # Confirmed by CI: this resolved to "D:\\" (a root) on one Windows
+    # machine and to something else on windows-latest's runner, failing an
+    # earlier version of this test that asserted True unconditionally.
 
     def test_subdirectory_is_not_a_root(self):
         assert scan_mod._is_volume_root("C:\\Users") is False
