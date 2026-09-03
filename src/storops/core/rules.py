@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 import platform as _platform
 import re
-from fnmatch import fnmatch
+from fnmatch import translate
 from pathlib import Path
 
 from storops.core.models import PathIdentity, Rule
@@ -144,17 +144,32 @@ def _build_rule(d: dict[str, object]) -> Rule:
     )
 
 
+_default_rules_dir_cache: Path | None = None
+
+
 def _default_rules_dir() -> Path:
+    # Memoized: Path.resolve()/.is_dir() measured ~0.3ms/call on Windows
+    # (filesystem-filter/AV overhead on every stat) -- identify_path() is
+    # called once per scanned path with no explicit rules_dir, so a batch
+    # of ~1200 paths used to pay this on every single call for a result
+    # that can never change (__file__'s location, and therefore the repo's
+    # rules/ directory, is fixed for the life of the process).
+    global _default_rules_dir_cache
+    if _default_rules_dir_cache is not None:
+        return _default_rules_dir_cache
+
     # Development / editable-install layout: <repo-root>/rules, walking up
     # from src/storops/core/rules.py (parents[3] == repo root).
     dev_candidate = Path(__file__).resolve().parents[3] / "rules"
     if dev_candidate.is_dir():
-        return dev_candidate
+        _default_rules_dir_cache = dev_candidate
+        return _default_rules_dir_cache
     # Installed-package layout: rules/ shipped as package data next to the
     # storops package (see pyproject.toml [tool.setuptools.package-data]).
     packaged_candidate = Path(__file__).resolve().parent.parent / "rules"
     if packaged_candidate.is_dir():
-        return packaged_candidate
+        _default_rules_dir_cache = packaged_candidate
+        return _default_rules_dir_cache
     raise FileNotFoundError(
         "StorOps: could not locate the rules/ directory (checked repo-root "
         f"'{dev_candidate}' and packaged '{packaged_candidate}')."
@@ -230,6 +245,63 @@ def expand_pattern_tokens(pattern: str) -> str:
     return result
 
 
+_matcher_cache: dict[str, tuple[re.Pattern[str], str | None]] = {}
+_matcher_cache_tokens: dict[str, str | None] | None = None
+
+
+def _sync_matcher_cache(tokens: dict[str, str | None]) -> None:
+    """Drop all cached per-pattern matchers when the token table has
+    changed since the last check (compared by value, not identity).
+
+    Called once per identify_path()/_pattern_matches() entry rather than
+    once per pattern -- env vars/HOME/platform can change independently of
+    the rule files (notably in tests that monkeypatch Path.home()/
+    os.environ/_platform.system()/_platform_tokens itself and expect
+    identify_path() to reflect that on the very next call, with no
+    load_rules(force=True) in between), so this must run somewhere on
+    every call, but doing it per-pattern (~150 times per path) rather than
+    per-path measurably added up over a large batch.
+    """
+    global _matcher_cache_tokens
+    if tokens != _matcher_cache_tokens:
+        _matcher_cache.clear()
+        _matcher_cache_tokens = tokens
+
+
+def _matcher_for(pattern: str) -> tuple[re.Pattern[str], str | None]:
+    """Compiled regex + optional bare-directory prefix for one rule pattern,
+    memoized by the raw pattern string. Caller must have already called
+    _sync_matcher_cache() for the current token table.
+
+    Rule patterns (~150 across rules/*.yaml) are static once loaded, so
+    re-expanding tokens, re-normalizing, and re-translating a pattern to a
+    regex for every path checked against it is pure waste -- identify_path()
+    on a batch of ~1200 paths used to redo all of that ~150 times per path
+    (once per pattern), which dominated its runtime.
+    """
+    cached = _matcher_cache.get(pattern)
+    if cached is not None:
+        return cached
+
+    expanded = normalize_separators(expand_pattern_tokens(pattern))
+    bare_prefix = expanded[: -len("/*")] if expanded.endswith("/*") else None
+    matcher = (re.compile(translate(expanded)), bare_prefix)
+    _matcher_cache[pattern] = matcher
+    return matcher
+
+
+def _matches(candidate: str, pattern: str) -> bool:
+    """True if `candidate` (an already normalize_separators()-ed path) is
+    described by `pattern`. See _pattern_matches()'s docstring for the
+    bare-directory special case this also applies. Caller must have
+    already called _sync_matcher_cache() for the current token table.
+    """
+    regex, bare_prefix = _matcher_for(pattern)
+    if regex.match(candidate):
+        return True
+    return bare_prefix is not None and candidate == bare_prefix
+
+
 def _pattern_matches(normalized_path: str, pattern: str) -> bool:
     """True if `normalized_path` is described by `pattern`.
 
@@ -249,14 +321,15 @@ def _pattern_matches(normalized_path: str, pattern: str) -> bool:
     here, once, for every caller (identify_path, and therefore scan/
     inspect/search/identify/cleanup/migrate all get it for free) rather
     than working around it at each call site.
+
+    A thin, self-contained wrapper around _matches() -- identify_path()'s
+    hot loop calls _sync_matcher_cache()/_matches() directly with a
+    candidate it already computed once for the whole rule base, rather
+    than through here, since this function's job is being a simple
+    single-pattern predicate rather than the batch-matching fast path.
     """
-    expanded = normalize_separators(expand_pattern_tokens(pattern))
-    candidate = normalize_separators(normalized_path)
-    if fnmatch(candidate, expanded):
-        return True
-    if expanded.endswith("/*") and candidate == expanded[: -len("/*")]:
-        return True
-    return False
+    _sync_matcher_cache(_platform_tokens())
+    return _matches(normalize_separators(normalized_path), pattern)
 
 
 def _unknown_identity(normalized_path: str) -> PathIdentity:
@@ -324,8 +397,13 @@ def identify_path(path: str | os.PathLike[str], *, rules_dir: Path | str | None 
     probe path) and must not fall into this trap by re-searching.
     """
     normalized = resolve_path(path)
+    # Computed/synced once per call rather than once per (rule, pattern)
+    # pair -- see _matcher_for()'s docstring for why that redundancy used
+    # to dominate this function's cost on a large batch of paths.
+    candidate = normalize_separators(normalized)
+    _sync_matcher_cache(_platform_tokens())
     for rule in load_rules(rules_dir):
         for pattern in rule.path_patterns:
-            if _pattern_matches(normalized, pattern):
+            if _matches(candidate, pattern):
                 return identity_from_rule(rule, normalized, pattern)
     return _unknown_identity(normalized)

@@ -1,23 +1,29 @@
 """Windows scan backends + capacity provider.
 
-WizTree (NTFS MFT direct-read) is the preferred backend on Windows -- see
-storops.platform.backends.wiztree. This module provides:
+WizTree (NTFS MFT direct-read) is WindowsNativeBackend's higher-tier
+sibling on Windows -- see storops.platform.backends.wiztree. This module
+provides:
 
 - `get_windows_scan_backend()`: the factory storops.platform.base.
-  get_scan_backend() calls on Windows. Tries to locate WizTree; falls back
-  to `WindowsNativeBackend` when it isn't installed.
+  get_scan_backend() calls on Windows. Locates WizTree if possible, but
+  only ever actually routes a given call to it for a whole-volume target
+  on an elevated process -- see `_AdaptiveWindowsBackend` below for why;
+  everything else uses `WindowsNativeBackend`, including every call when
+  WizTree cannot be located at all.
 - `WindowsNativeBackend`: a NET-NEW capability (the old PowerShell v1 tool
   had no fallback at all -- no WizTree meant the tool was simply unusable
   on Windows, see docs/plans/storops-v2-cross-platform-refactor.md
   §1.6.3/§2.13). Built on `os.scandir()`/`os.stat()` only -- zero
-  third-party/external-binary dependency, at the cost of being roughly the
-  same speed class as Linux `du` (a full stat() walk), not WizTree's
-  MFT-direct-read speed.
+  third-party/external-binary dependency. Despite the module docstring
+  history here previously assuming this was categorically slower than
+  WizTree, live measurement (below) found the opposite for anything short
+  of a full-volume scan.
 - `WindowsCapacityProvider`: `shutil.disk_usage()` -- stdlib already wraps
   `GetDiskFreeSpaceExW`, no ctypes/pywin32 needed (§2.11a).
 """
 from __future__ import annotations
 
+import concurrent.futures
 import fnmatch
 import os
 import shutil
@@ -26,22 +32,151 @@ from typing import TYPE_CHECKING
 
 from storops.core.models import Capacity, Entry, ScanWarning
 from storops.core.paths import resolve_path
+from storops.platform.base import is_admin
 
 if TYPE_CHECKING:
     from storops.platform.base import ScanBackend
 
 
+def _is_volume_root(path: str) -> bool:
+    """True if `path` names a drive's root ("C:\\") rather than any
+    subdirectory of it. See _AdaptiveWindowsBackend's docstring for why
+    this is the one scope WizTree's CLI export was actually measured to
+    win at.
+
+    Uses `ntpath` explicitly rather than `os.path`/core.paths.resolve_path
+    -- both are aliases for ntpath's own functions when genuinely running
+    on Windows (the only platform this module is ever used on for real),
+    but resolve to posixpath's very different drive-less semantics when
+    this module's tests run on a non-Windows CI runner (as
+    test_windows_scan.py's own module docstring notes they do), which
+    would make a path like "C:\\" silently fail to parse as a root at all.
+    """
+    import ntpath
+
+    resolved = ntpath.abspath(path)
+    drive, tail = ntpath.splitdrive(resolved)
+    return bool(drive) and tail in ("", "\\", "/")
+
+
+class _AdaptiveWindowsBackend:
+    """Routes each call to WizTree only for a whole-volume target on an
+    elevated process; WindowsNativeBackend otherwise.
+
+    This project's own earlier assumption -- WizTree's NTFS MFT direct
+    read categorically beats a per-file stat() walk -- turned out to be
+    wrong in the way that actually matters for this tool: WizTree's CLI
+    export (the only interface storops uses -- it never drives the GUI)
+    reads the *entire* volume's file record table regardless of how small
+    the requested target is, so that fixed cost is only amortized when
+    the target approaches the whole volume. Measured live on a real
+    install (D:\\apps\\wiztree, WizTree 4.32), against this session's
+    already-parallelized WindowsNativeBackend._walk_root():
+
+        target scope           condition          WizTree vs native
+        System32 (~2% of vol)  elevated, admin=1  4.2x SLOWER
+        %LOCALAPPDATA% (~25%)  elevated, admin=1  2.5x SLOWER
+        %LOCALAPPDATA% (~25%)  not elevated       2.1x SLOWER
+        System32 (~2%)         not elevated        9.9x SLOWER
+        whole C:\\ (100%)       elevated, admin=1  1.09x faster
+        whole C:\\ (100%)       elevated, admin=0  1.36x faster
+
+    Two more things fell out of that same data, both reflected above:
+    admin=1 (the flag this backend still passes for a volume-root scan,
+    since it's WizTree's documented way to request the MFT path and it
+    was never slower on the elevated runs) bought no measurable speedup
+    over admin=0 once the *process* was already elevated -- elevation of
+    the calling process, not the flag, seems to be what actually matters,
+    though WizTree is closed-source and this isn't confirmed from its
+    side. And a non-elevated whole-volume scan was never measured (WizTree
+    cannot self-elevate via UAC -- passing admin=1 from a non-elevated
+    process just fails outright, confirmed live), so that combination
+    conservatively still routes to native rather than assuming it would
+    also win.
+    """
+
+    def __init__(self, wiztree: "ScanBackend", native: "WindowsNativeBackend") -> None:
+        self._wiztree = wiztree
+        self._native = native
+        self._last: "ScanBackend" = native
+
+    def _pick(self, path: str) -> "ScanBackend":
+        # _is_volume_root() does its own ntpath-based resolution (see its
+        # docstring) rather than the platform-generic resolve_path() --
+        # deliberately not pre-resolving `path` here first.
+        self._last = self._wiztree if (_is_volume_root(path) and is_admin()) else self._native
+        return self._last
+
+    @property
+    def name(self) -> str:
+        return self._last.name
+
+    def scan(
+        self,
+        path: str,
+        *,
+        export_folders: bool = True,
+        export_files: bool = False,
+        max_depth: int = 0,
+        name_filter: str | None = None,
+        name_exclude: str | None = None,
+        admin: bool = False,
+    ) -> list[Entry]:
+        return self._pick(path).scan(
+            path,
+            export_folders=export_folders,
+            export_files=export_files,
+            max_depth=max_depth,
+            name_filter=name_filter,
+            name_exclude=name_exclude,
+            admin=admin,
+        )
+
+    def top_entries(
+        self,
+        path: str,
+        *,
+        top: int = 20,
+        max_depth: int = 1,
+        admin: bool = False,
+        include_files: bool = False,
+    ) -> list[Entry]:
+        return self._pick(path).top_entries(
+            path, top=top, max_depth=max_depth, admin=admin, include_files=include_files
+        )
+
+    def path_size(self, path: str, *, admin: bool = False) -> Entry | None:
+        return self._pick(path).path_size(path, admin=admin)
+
+    def advice(self) -> str | None:
+        if self._last is self._wiztree:
+            return None
+        if self._wiztree is not None:
+            return (
+                "Using the native scan for this target -- WizTree's CLI export only "
+                "measurably wins for a whole-drive scan (e.g. 'C:\\') on an elevated "
+                "process; for anything narrower it reads the entire volume's file "
+                "table for no benefit, which loses to the native scan by 2x-10x, so "
+                "it's skipped here even though WizTree is installed."
+            )
+        return self._native.advice()
+
+    def take_warnings(self) -> list[ScanWarning]:
+        return self._last.take_warnings()
+
+
 def get_windows_scan_backend() -> "ScanBackend":
     """Factory consumed by storops.platform.base.get_scan_backend() on
-    Windows. Prefers WizTree; falls back to the native os.scandir backend
-    when WizTree cannot be located.
+    Windows. See _AdaptiveWindowsBackend's docstring for the (measured,
+    not assumed) rule governing when a call actually gets routed to
+    WizTree rather than WindowsNativeBackend.
     """
     from storops.platform.backends.wiztree import WizTreeBackend, find_wiztree
 
     exe = find_wiztree()
-    if exe:
-        return WizTreeBackend(exe)
-    return WindowsNativeBackend()
+    if not exe:
+        return WindowsNativeBackend()
+    return _AdaptiveWindowsBackend(WizTreeBackend(exe), WindowsNativeBackend())
 
 
 def _allocated_bytes(st: os.stat_result) -> int:
@@ -66,6 +201,48 @@ def _name_matches(name: str, name_filter: str | None, name_exclude: str | None) 
     if name_exclude and fnmatch.fnmatch(lowered, name_exclude.lower()):
         return False
     return True
+
+
+def _stat_file_child(
+    child: os.DirEntry,
+    *,
+    export_files: bool,
+    name_filter: str | None,
+    name_exclude: str | None,
+    warnings: list[ScanWarning],
+) -> tuple[int, int, datetime | None, Entry | None] | None:
+    """Stat one non-directory scandir entry: (size, allocated, mtime,
+    export-entry-or-None). None means the stat itself failed -- caller
+    must skip this child entirely (no size/count contribution), matching
+    a directory that raises PermissionError/OSError. Shared by _walk() and
+    _walk_root() so both apply identical file-handling logic.
+    """
+    try:
+        st = child.stat(follow_symlinks=False)
+    except PermissionError as exc:
+        warnings.append(ScanWarning(path=child.path, code="permission_denied", message=str(exc)))
+        return None
+    except OSError as exc:
+        warnings.append(ScanWarning(path=child.path, code="scan_error", message=str(exc)))
+        return None
+
+    allocated = _allocated_bytes(st)
+    try:
+        mtime = datetime.fromtimestamp(st.st_mtime)
+    except (OSError, OverflowError, ValueError) as exc:
+        warnings.append(ScanWarning(path=child.path, code="scan_error", message=str(exc)))
+        mtime = None
+
+    entry = None
+    if export_files and _name_matches(child.name, name_filter, name_exclude):
+        entry = Entry(
+            full_name=child.path,
+            is_folder=False,
+            size_bytes=st.st_size,
+            allocated_bytes=allocated,
+            modified=mtime,
+        )
+    return st.st_size, allocated, mtime, entry
 
 
 def _walk(
@@ -155,34 +332,158 @@ def _walk(
                     )
                 )
         else:
-            try:
-                st = child.stat(follow_symlinks=False)
-            except PermissionError as exc:
-                warnings.append(ScanWarning(path=child.path, code="permission_denied", message=str(exc)))
+            result = _stat_file_child(
+                child,
+                export_files=export_files,
+                name_filter=name_filter,
+                name_exclude=name_exclude,
+                warnings=warnings,
+            )
+            if result is None:
                 continue
+            size, allocated, mtime, entry = result
+            file_count += 1
+            total_size += size
+            total_allocated += allocated
+            if mtime is not None and (latest_mtime is None or mtime > latest_mtime):
+                latest_mtime = mtime
+            if within_depth and entry is not None:
+                out.append(entry)
+
+    return total_size, total_allocated, file_count, folder_count, latest_mtime
+
+
+_DEFAULT_PARALLEL_WORKERS = 8
+
+
+def _walk_root(
+    path: str,
+    *,
+    max_depth: int,
+    export_folders: bool,
+    export_files: bool,
+    name_filter: str | None,
+    name_exclude: str | None,
+    warnings: list[ScanWarning],
+    out: list[Entry],
+    max_workers: int = _DEFAULT_PARALLEL_WORKERS,
+) -> tuple[int, int, int, int, datetime | None]:
+    """Entry point for WindowsNativeBackend.scan(): splits the scan root's
+    immediate subdirectories across a thread pool, then walks each with the
+    ordinary sequential _walk(). os.scandir()/DirEntry.stat() release the
+    GIL for their underlying syscall, and on Windows each call already pays
+    real per-call latency (filesystem-filter/AV interception) independent
+    of CPU work, so a scan is mostly threads waiting on I/O -- exactly the
+    case a thread pool helps with despite the GIL.
+
+    Only this top level is split; every subdirectory's contents are then
+    walked sequentially via plain _walk() recursion. A worker task must
+    never submit more work to this same bounded pool: if every worker were
+    blocked on a `.result()` for a child future while no free worker
+    remains to run it, the pool deadlocks. Splitting one level down and
+    staying sequential thereafter sidesteps that entirely, at the cost of
+    a real limitation: a scan dominated by one huge immediate subdirectory
+    (e.g. C:\\Users on a `C:\\` scan) sees a much smaller speedup than one
+    with several similarly-sized subdirectories, since that one dominant
+    subdirectory still runs start-to-finish on a single thread.
+
+    Merges results back in the original os.scandir() order (not thread
+    completion order) so `out` matches the sequential backend entry-for-
+    entry -- not required for correctness (nothing downstream depends on
+    scan() row order; callers sort explicitly), but makes orig-vs-patched
+    diffing straightforward.
+    """
+    try:
+        children = list(os.scandir(path))
+    except PermissionError as exc:
+        warnings.append(ScanWarning(path=path, code="permission_denied", message=str(exc)))
+        return 0, 0, 0, 0, None
+    except OSError as exc:
+        warnings.append(ScanWarning(path=path, code="scan_error", message=str(exc)))
+        return 0, 0, 0, 0, None
+
+    within_depth = max_depth == 0 or 1 <= max_depth
+
+    total_size = 0
+    total_allocated = 0
+    file_count = 0
+    folder_count = 0
+    latest_mtime: datetime | None = None
+
+    # One slot per scandir()-ordered child, resolved in that same order
+    # below regardless of which future finished first.
+    slots: list[tuple] = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for child in children:
+            try:
+                is_dir = child.is_dir(follow_symlinks=False)
             except OSError as exc:
                 warnings.append(ScanWarning(path=child.path, code="scan_error", message=str(exc)))
                 continue
 
-            file_count += 1
-            total_size += st.st_size
-            allocated = _allocated_bytes(st)
-            total_allocated += allocated
-            try:
-                mtime = datetime.fromtimestamp(st.st_mtime)
-            except (OSError, OverflowError, ValueError) as exc:
-                warnings.append(ScanWarning(path=child.path, code="scan_error", message=str(exc)))
-                mtime = None
-            if mtime is not None and (latest_mtime is None or mtime > latest_mtime):
-                latest_mtime = mtime
-            if within_depth and export_files and _name_matches(child.name, name_filter, name_exclude):
+            if not is_dir:
+                slots.append(("file", child))
+                continue
+
+            sub_warnings: list[ScanWarning] = []
+            sub_out: list[Entry] = []
+            future = pool.submit(
+                _walk,
+                child.path,
+                depth=1,
+                max_depth=max_depth,
+                export_folders=export_folders,
+                export_files=export_files,
+                name_filter=name_filter,
+                name_exclude=name_exclude,
+                warnings=sub_warnings,
+                out=sub_out,
+            )
+            slots.append(("dir", child, future, sub_warnings, sub_out))
+
+        for slot in slots:
+            if slot[0] == "file":
+                _, child = slot
+                result = _stat_file_child(
+                    child,
+                    export_files=export_files,
+                    name_filter=name_filter,
+                    name_exclude=name_exclude,
+                    warnings=warnings,
+                )
+                if result is None:
+                    continue
+                size, allocated, mtime, entry = result
+                file_count += 1
+                total_size += size
+                total_allocated += allocated
+                if mtime is not None and (latest_mtime is None or mtime > latest_mtime):
+                    latest_mtime = mtime
+                if within_depth and entry is not None:
+                    out.append(entry)
+                continue
+
+            _, child, future, sub_warnings, sub_out = slot
+            sub_size, sub_alloc, sub_files, sub_folders, sub_mtime = future.result()
+            warnings.extend(sub_warnings)
+            out.extend(sub_out)
+            total_size += sub_size
+            total_allocated += sub_alloc
+            file_count += sub_files
+            folder_count += 1 + sub_folders
+            if sub_mtime and (latest_mtime is None or sub_mtime > latest_mtime):
+                latest_mtime = sub_mtime
+            if within_depth and export_folders and _name_matches(child.name, name_filter, name_exclude):
                 out.append(
                     Entry(
                         full_name=child.path,
-                        is_folder=False,
-                        size_bytes=st.st_size,
-                        allocated_bytes=allocated,
-                        modified=mtime,
+                        is_folder=True,
+                        size_bytes=sub_size,
+                        allocated_bytes=sub_alloc,
+                        modified=sub_mtime,
+                        file_count=sub_files,
+                        folder_count=sub_folders,
                     )
                 )
 
@@ -218,9 +519,8 @@ class WindowsNativeBackend:
         self._warnings = []
         target = resolve_path(path)
         out: list[Entry] = []
-        _walk(
+        _walk_root(
             target,
-            depth=0,
             max_depth=max_depth,
             export_folders=export_folders,
             export_files=export_files,
@@ -249,17 +549,59 @@ class WindowsNativeBackend:
         return sorted(entries, key=lambda e: e.size_bytes, reverse=True)[:top]
 
     def path_size(self, path: str, *, admin: bool = False) -> Entry | None:
+        """Aggregate size/count for `path` itself, computed by walking
+        `path`'s own subtree directly (via _walk_root(), so this still
+        gets the same root-level parallel split) -- NOT by scanning its
+        parent directory and searching for `path` in that listing, which
+        this used to do. That meant probing a directory whose *parent*
+        happens to be huge (e.g. "C:\\Windows\\Temp", parent "C:\\Windows")
+        walked every unrelated sibling too, real-world measured at ~2.7M
+        stat() calls (~76s) for a single storops cleanup plan run -- most
+        of a full drive's worth of work to size two small directories.
+        """
         target = resolve_path(path)
         if not os.path.exists(target):
             return None
-        parent = os.path.dirname(target)
-        if not parent or parent == target:
-            return None
-        entries = self.scan(parent, export_folders=True, export_files=True, max_depth=1)
-        for entry in entries:
-            if entry.full_name == target:
-                return entry
-        return None
+
+        self._warnings = []
+        if not os.path.isdir(target):
+            try:
+                st = os.stat(target, follow_symlinks=False)
+            except OSError as exc:
+                self._warnings.append(ScanWarning(path=target, code="scan_error", message=str(exc)))
+                return None
+            try:
+                mtime = datetime.fromtimestamp(st.st_mtime)
+            except (OSError, OverflowError, ValueError):
+                mtime = None
+            return Entry(
+                full_name=target,
+                is_folder=False,
+                size_bytes=st.st_size,
+                allocated_bytes=_allocated_bytes(st),
+                modified=mtime,
+            )
+
+        out: list[Entry] = []
+        size, allocated, file_count, folder_count, mtime = _walk_root(
+            target,
+            max_depth=0,
+            export_folders=False,
+            export_files=False,
+            name_filter=None,
+            name_exclude=None,
+            warnings=self._warnings,
+            out=out,
+        )
+        return Entry(
+            full_name=target,
+            is_folder=True,
+            size_bytes=size,
+            allocated_bytes=allocated,
+            modified=mtime,
+            file_count=file_count,
+            folder_count=folder_count,
+        )
 
     def advice(self) -> str | None:
         return (

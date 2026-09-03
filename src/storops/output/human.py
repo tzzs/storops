@@ -56,7 +56,7 @@ def render_search(result: SearchResult) -> str:
     for row in result.entries:
         label = row.application or "(unidentified)"
         mod_label = row.modified.strftime("%Y-%m-%d") if row.modified else "?"
-        lines.append(f"{format_size(row.size_bytes):>10}  {mod_label:<10} {label:<18}{row.path}")
+        lines.append(f"{format_size(row.size_bytes):>10}  {row.recommended:<8} {mod_label:<10} {label:<18}{row.cleanup_risk:<8}{row.path}")
     return "\n".join(lines)
 
 

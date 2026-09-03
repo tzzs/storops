@@ -122,6 +122,7 @@ def search(
     rows = []
     for e in top_entries:
         identity = rules.identify_path(e.full_name)
+        action = risk.recommended_action(identity)
         rows.append(
             SearchRow(
                 path=e.full_name,
@@ -130,6 +131,8 @@ def search(
                 modified=e.modified,
                 application=identity.application,
                 category=identity.category,
+                cleanup_risk=identity.cleanup_risk,
+                recommended=action.action,
             )
         )
 

@@ -83,6 +83,18 @@ def test_search_filters_by_min_size_and_age(monkeypatch):
     assert result.entries[0].path == "/x/b"
 
 
+def test_search_attaches_cleanup_risk_and_recommended_action(monkeypatch):
+    # search() carries the same identity + recommended-action info as
+    # inspect() -- letting a single `search --folders --max-depth N` call
+    # substitute for "scan, then inspect each large subdirectory in turn"
+    # (each of which re-walks its own subtree from scratch) without losing
+    # the risk/action info that workflow depends on.
+    monkeypatch.setattr(platform_pkg, "get_scan_backend", lambda: FakeBackend(_entries()))
+    result = scan.search("/x")
+    assert all(row.recommended in {"KEEP", "DELETE", "MOVE", "CHECK"} for row in result.entries)
+    assert all(row.cleanup_risk for row in result.entries)
+
+
 def test_scan_carries_backend_warnings_through(monkeypatch):
     warnings = [ScanWarning(path="/x/locked", code="permission_denied", message="denied")]
     monkeypatch.setattr(platform_pkg, "get_scan_backend", lambda: FakeBackend(_entries(), warnings=warnings))

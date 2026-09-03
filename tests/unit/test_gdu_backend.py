@@ -204,6 +204,30 @@ class TestGduBackendRealBinaryIntegration:
         assert entry is not None
         assert entry.size_bytes == 500
 
+    def test_path_size_does_not_touch_sibling_directories(self, tmp_path):
+        # Regression test: path_size() used to export `target`'s *parent*
+        # and search for `target` in that listing -- meaning gdu itself
+        # walked every unrelated sibling on disk too whenever the parent
+        # happened to be large. It must now only ever target `path` itself.
+        root = self._make_tree(tmp_path)
+        huge_sibling = root / "b" / "huge_sibling"
+        huge_sibling.mkdir()
+        (huge_sibling / "big.bin").write_bytes(b"w" * 1_000_000)
+
+        backend = GduBackend()
+        entry = backend.path_size(str(root / "b" / "nested"))
+        assert entry is not None
+        assert entry.size_bytes == 500
+
+    def test_path_size_on_a_file(self, tmp_path):
+        root = self._make_tree(tmp_path)
+        backend = GduBackend()
+
+        entry = backend.path_size(str(root / "a" / "f1.bin"))
+        assert entry is not None
+        assert entry.is_folder is False
+        assert entry.size_bytes == 1000
+
     def test_name_filter(self, tmp_path):
         root = self._make_tree(tmp_path)
         (root / "a" / "note.txt").write_bytes(b"hi")
