@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -111,8 +112,14 @@ def execute(plan_file: str, *, confirm: bool = False, app_closed: bool = False) 
     # here and may no longer be the one plan() wrote. An empty source directory
     # would slip past the non-empty-destination check below, the copy would
     # trivially "verify" (0==0), and rmtree would then delete the directory as
-    # its own destination. normcase covers case-insensitive filesystems.
-    if os.path.normcase(resolve_path(destination)) == os.path.normcase(resolve_path(source)):
+    # its own destination. normcase folds case on Windows only; darwin folds
+    # explicitly because default APFS volumes are case-insensitive too.
+    resolved_source = resolve_path(source)
+    resolved_destination = resolve_path(destination)
+    collide = os.path.normcase(resolved_source) == os.path.normcase(resolved_destination)
+    if sys.platform == "darwin":
+        collide = collide or resolved_source.lower() == resolved_destination.lower()
+    if collide:
         raise UnsupportedOperationError(
             f"StorOps: plan is invalid -- destination equals the source ('{source}'). "
             "Re-run `storops migrate plan` with a distinct destination."
