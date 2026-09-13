@@ -1025,11 +1025,17 @@ class WindowsNativeBackend:
         )
 
     def advice(self) -> str | None:
+        # Careful with this text: per _AdaptiveWindowsBackend's docstring
+        # measurements, WizTree only wins for a whole-drive scan on an
+        # elevated process -- for anything narrower this native scan beats
+        # it, so "install WizTree for much faster scans" would be wrong.
         return (
-            "WizTree was not found -- using a slower native scan (os.scandir). "
-            "Install WizTree (https://diskanalyzer.com/) for much faster NTFS "
-            "MFT-based scans, or set $env:STOROPS_WIZTREE_PATH if it's already "
-            "installed somewhere non-standard."
+            "Using the native scan (os.scandir, parallelized). WizTree was not "
+            "found; it only measurably wins for a whole-drive scan (e.g. 'C:\\') "
+            "on an elevated process, so it's worth installing "
+            "(https://diskanalyzer.com/, or $env:STOROPS_WIZTREE_PATH if already "
+            "installed somewhere non-standard) mainly if you regularly scan whole "
+            "drives. Free for personal use; commercial use requires a license."
         )
 
     def take_warnings(self) -> list[ScanWarning]:
