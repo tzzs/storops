@@ -21,6 +21,8 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -136,11 +138,16 @@ def test_full_scan_pipeline_parses_the_real_export(monkeypatch, tmp_path):
     root.mkdir()
 
     def fake_run(args, **kwargs):
-        out_file = args[args.index("-o") + 1]
+        out_file = Path(args[args.index("-o") + 1]).resolve()
+        # Containment first: the export file is the tempfile the backend
+        # itself created in the system temp dir (gdu.py's
+        # tempfile.mkstemp) -- the fixture writer must never touch
+        # anything outside it.
+        if not out_file.is_relative_to(Path(tempfile.gettempdir()).resolve()):
+            raise AssertionError(f"fixture export escaped the system temp dir: {out_file}")
         export = json.loads(json.dumps(_REAL_GDU_EXPORT))
         export[3][0]["name"] = str(root)
-        with open(out_file, "w", encoding="utf-8") as fh:
-            json.dump(export, fh)
+        out_file.write_text(json.dumps(export), encoding="utf-8")
 
         class _Result:
             returncode = 0
