@@ -110,10 +110,9 @@ class TestWindowsNativeBackendScan:
 
     def test_root_level_directories_are_aggregated_correctly(self, tmp_path):
         # Several immediate root subdirectories plus a root-level file --
-        # scan() splits exactly this shape (root's immediate children)
-        # across a thread pool (see _walk_root() in platform/windows/scan.py),
-        # so this exercises the real parallel-merge path, not just a single
-        # sequential _walk().
+        # exactly the shape the parallel walk (see _walk_root() in
+        # platform/windows/scan.py) first fans out from, so this exercises
+        # the real parallel path, not just a single sequential _walk().
         root = tmp_path / "root"
         (root / "a" / "sub").mkdir(parents=True)
         (root / "b").mkdir(parents=True)
@@ -504,3 +503,172 @@ class TestIsVolumeRoot:
 
     def test_non_windows_shaped_path_is_not_a_root(self):
         assert scan_mod._is_volume_root("/home/user") is False
+
+
+def _entry_row(e):
+    """Full-field tuple for exact parallel-vs-sequential comparison."""
+    return (
+        e.full_name,
+        e.is_folder,
+        e.size_bytes,
+        e.allocated_bytes,
+        e.modified,
+        e.file_count,
+        e.folder_count,
+    )
+
+
+def _warning_row(w):
+    return (w.path, w.code, w.message)
+
+
+class TestWorkQueueWalk:
+    """_walk_root() must be indistinguishable from the plain sequential
+    _walk() it replaced -- same rows in the same order, same warnings,
+    same aggregates -- on trees shaped to engage every part of the
+    work-queue engine: wide at the root, one dominant child, a deep
+    chain, filters, depth limits, and unreadable directories."""
+
+    _SCAN_KWARGS = dict(
+        depth=0,
+        max_depth=0,
+        export_folders=True,
+        export_files=True,
+        name_filter=None,
+        name_exclude=None,
+    )
+
+    @staticmethod
+    def _build_tree(root):
+        # Wide at the root (6 children) with one dominant child holding 12
+        # subdirectories of its own (more than a small worker split could
+        # cover at one level), plus a 25-level deep chain hanging off that
+        # child -- the shape where the old root-level-only split lost all
+        # parallelism.
+        dominant = root / "dominant"
+        for i in range(12):
+            d = dominant / f"sub{i:02d}"
+            d.mkdir(parents=True)
+            (d / "f.bin").write_bytes(b"x" * (i + 1) * 7)
+            (d / "log.txt").write_bytes(b"y" * (i + 2) * 3)
+        chain = dominant / "chain"
+        for i in range(25):
+            chain = chain / f"c{i:02d}"
+            chain.mkdir(parents=True)
+            (chain / "deep.bin").write_bytes(b"z" * (i + 1))
+        for i in range(5):
+            d = root / f"top{i}"
+            d.mkdir()
+            (d / f"f{i}.bin").write_bytes(b"a" * (i + 1) * 11)
+        (root / "rootfile.txt").write_bytes(b"b" * 13)
+
+    def _assert_identical(self, root, max_workers, **overrides):
+        sequential_kwargs = {**self._SCAN_KWARGS, **overrides}
+        sequential_out: list = []
+        sequential_warnings: list = []
+        sequential_aggregates = scan_mod._walk(
+            str(root), warnings=sequential_warnings, out=sequential_out, **sequential_kwargs
+        )
+
+        parallel_out: list = []
+        parallel_warnings: list = []
+        parallel_aggregates = scan_mod._walk_root(
+            str(root),
+            warnings=parallel_warnings,
+            out=parallel_out,
+            max_workers=max_workers,
+            **{k: v for k, v in sequential_kwargs.items() if k != "depth"},
+        )
+
+        assert [_entry_row(e) for e in parallel_out] == [_entry_row(e) for e in sequential_out]
+        assert [_warning_row(w) for w in parallel_warnings] == [
+            _warning_row(w) for w in sequential_warnings
+        ]
+        assert parallel_aggregates == sequential_aggregates
+        return parallel_out
+
+    def test_matches_sequential_exactly(self, tmp_path):
+        root = tmp_path / "root"
+        self._build_tree(root)
+        for max_workers in (2, 4, 8):
+            self._assert_identical(root, max_workers)
+
+    def test_matches_sequential_exactly_with_filters_and_depth_limit(self, tmp_path):
+        root = tmp_path / "root"
+        self._build_tree(root)
+        self._assert_identical(
+            root,
+            max_workers=3,
+            max_depth=2,
+            name_filter="*.bin",
+            name_exclude="log*",
+        )
+
+    def test_matches_sequential_exactly_folders_only(self, tmp_path):
+        root = tmp_path / "root"
+        self._build_tree(root)
+        self._assert_identical(root, max_workers=4, export_files=False)
+
+    def test_matches_sequential_exactly_with_max_workers_1(self, tmp_path):
+        # max_workers=1 takes the deliberate no-threading shortcut through
+        # plain _walk(); it must still produce the same rows/aggregates.
+        root = tmp_path / "root"
+        self._build_tree(root)
+        self._assert_identical(root, max_workers=1)
+
+    def test_permission_error_deep_in_the_tree_matches_sequential(self, tmp_path, monkeypatch):
+        # An unreadable directory TWO levels below the scan root exercises
+        # the completion cascade through intermediate nodes, which the old
+        # root-level-only split never had to deal with.
+        root = tmp_path / "root"
+        self._build_tree(root)
+        locked = root / "dominant" / "sub03"
+
+        real_scandir = scan_mod.os.scandir
+
+        def fake_scandir(path):
+            if str(path) == str(locked):
+                raise PermissionError("denied")
+            return real_scandir(path)
+
+        monkeypatch.setattr(scan_mod.os, "scandir", fake_scandir)
+        parallel_out = self._assert_identical(root, max_workers=4)
+        # The locked directory itself still shows up (with zeroed
+        # aggregates -- matching _walk()), but nothing underneath it does.
+        deeper = [
+            e
+            for e in parallel_out
+            if e.full_name.startswith(str(locked)) and e.full_name != str(locked)
+        ]
+        assert deeper == []
+
+
+class TestResolveMaxWorkers:
+    def test_unset_env_uses_default(self, monkeypatch):
+        monkeypatch.delenv(scan_mod._WORKERS_ENV_VAR, raising=False)
+        assert scan_mod._resolve_max_workers() == 8
+
+    def test_parseable_values_are_clamped_into_range(self, monkeypatch):
+        for raw, expected in [("1", 1), ("3", 3), ("64", 64), ("100", 64), ("0", 1), ("-7", 1)]:
+            monkeypatch.setenv(scan_mod._WORKERS_ENV_VAR, raw)
+            assert scan_mod._resolve_max_workers() == expected
+
+    def test_unparsable_values_fall_back_to_default(self, monkeypatch):
+        for raw in ["eight", "", "   ", "8.5"]:
+            monkeypatch.setenv(scan_mod._WORKERS_ENV_VAR, raw)
+            assert scan_mod._resolve_max_workers() == 8
+
+    def test_scan_honors_the_env_var_end_to_end(self, tmp_path, monkeypatch):
+        # "1" routes through the sequential shortcut, "3" through the
+        # work-queue engine; both must produce the same complete result.
+        root = tmp_path / "root"
+        TestWorkQueueWalk._build_tree(root)
+        backend = WindowsNativeBackend()
+        outputs = []
+        for value in ("1", "3"):
+            monkeypatch.setenv(scan_mod._WORKERS_ENV_VAR, value)
+            outputs.append(
+                backend.scan(str(root), export_folders=True, export_files=True, max_depth=0)
+            )
+        assert len(outputs[0]) > 0
+        assert [_entry_row(e) for e in outputs[0]] == [_entry_row(e) for e in outputs[1]]
