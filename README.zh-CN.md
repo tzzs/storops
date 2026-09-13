@@ -49,11 +49,13 @@ Windows token;只有关键系统路径规则(`rules/windows.yaml`/`linux.yaml`/
   需要在 `PATH` 上。最常见的"克隆进 skills 目录"安装方式不需要
   `pip install`——从 checkout 目录直接运行 `python -m storops` 即可。
 - **Windows**:NTFS 卷。[WizTree](https://diskanalyzer.com/) 是可选的——
-  StorOps 自带的原生扫描(`os.scandir`,把扫描根目录的直接子目录分给多线程并行)
+  StorOps 自带的原生扫描(`os.scandir`,以工作队列在整棵扫描树内并行;
+  `$env:STOROPS_SCAN_WORKERS` 可调线程数,1-64,默认 8)
   已经覆盖了除"已提权进程扫整个盘"之外的所有场景,这也是实测中 WizTree 命令行
   导出唯一占优势的场景(见上方"当前状态")。如果你经常在提权终端下扫整个盘,
   可以装上(`WizTree64.exe` 需在 `PATH` 中、位于标准安装目录、能被它自己的安装
   注册表项找到,或通过 `$env:STOROPS_WIZTREE_PATH` 指定路径);否则不装也没关系。
+  注意 WizTree 仅个人使用免费,商业/组织使用需要购买许可。
 - **Linux/macOS**:推荐安装 [gdu](https://github.com/dundee/gdu)(`brew
   install gdu` / `apt install gdu`,或参见其安装文档)以获得并行、快得多的
   扫描;找不到 `gdu` 时 StorOps 会自动回退到系统自带的 `du`(并打印一次性

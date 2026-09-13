@@ -56,14 +56,16 @@ coverage.
   common "cloned into a skills directory" install path — `python -m storops`
   works straight out of the checkout.
 - **Windows**: NTFS volumes. [WizTree](https://diskanalyzer.com/) is
-  optional — StorOps' own native scan (`os.scandir`, parallelized across a
-  scan root's immediate subdirectories) is used for everything except a
+  optional — StorOps' own native scan (`os.scandir`, parallelized across
+  the scanned tree with a work queue; `$env:STOROPS_SCAN_WORKERS` tunes
+  the thread count, 1-64, default 8) is used for everything except a
   whole-drive scan on an elevated process, the one scope WizTree's CLI
   export was actually measured to win at (see Status above); install it
   (`WizTree64.exe` on `PATH`, in a standard install location, found via its
   own install-location registry entry, or pointed to via
   `$env:STOROPS_WIZTREE_PATH`) if you regularly run whole-drive scans
-  elevated, skip it otherwise.
+  elevated, skip it otherwise. Note WizTree is free for personal use
+  only — commercial/organizational use requires a license.
 - **Linux/macOS**: [gdu](https://github.com/dundee/gdu) recommended (`brew
   install gdu` / `apt install gdu` / see its install docs) for a parallel,
   much faster scan; StorOps falls back to the system `du` automatically if
