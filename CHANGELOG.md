@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.0.6](https://github.com/tzzs/storops/compare/storops-v1.0.5...storops-v1.0.6) (2026-09-14)
+
+
+### Bug Fixes
+
+* **migrate:** fold path case on darwin too -- normcase is a no-op on POSIX ([e40508f](https://github.com/tzzs/storops/commit/e40508fd822991c2514415fe1cbb56822b5e1447))
+* **migrate:** reject execute() plans whose destination equals the source ([cde1250](https://github.com/tzzs/storops/commit/cde1250b70b9fc3108e45f26921abf056d38704a))
+* **windows-scan:** stop advising WizTree where it measurably loses ([de97794](https://github.com/tzzs/storops/commit/de9779480f2ba9932fb76e1d619ac15f5b39dd37))
+
+
+### Performance Improvements
+
+* **windows-scan:** work-queue walk parallelizes the whole subtree ([07ff5b4](https://github.com/tzzs/storops/commit/07ff5b424f84b7d8ac8d208dd704469fb630a3d9))
+* **windows-scan:** work-queue walk parallelizes the whole subtree ([227bae7](https://github.com/tzzs/storops/commit/227bae7de57e5f533a13e29b9fbf983842b0b124))
+
 ## [1.0.5](https://github.com/tzzs/storops/compare/storops-v1.0.4...storops-v1.0.5) (2026-09-03)
 
 
