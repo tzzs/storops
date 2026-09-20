@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.1.0](https://github.com/tzzs/storops/compare/storops-v1.0.6...storops-v1.1.0) (2026-09-20)
+
+
+### Features
+
+* **rules:** identify the macOS developer toolchain's reclaimable caches ([1551692](https://github.com/tzzs/storops/commit/1551692b56d3cfb25ae3b3736232f9bc345b5555))
+
+
+### Bug Fixes
+
+* make StorOps actually work on macOS -- packaging, memory, and APFS duplicate counting ([ec4484e](https://github.com/tzzs/storops/commit/ec4484e329c159cf53da06557f0df29b747d97fa))
+* **packaging:** ship rules/*.yaml in the wheel and lower the floor to 3.9 ([b039495](https://github.com/tzzs/storops/commit/b039495985d9b175d4db6eaa60be3ce4f67c9f34))
+
+
+### Performance Improvements
+
+* **cleanup:** size a plan's probe paths concurrently ([ceabe15](https://github.com/tzzs/storops/commit/ceabe159ca7ea85c3b10fd0fbd1906b2cc7e2370))
+* **du:** fix the macOS scan path -- 2.6GB peak RSS and duplicate totals ([1577668](https://github.com/tzzs/storops/commit/15776681d990bdb2b98da1b2a0c5b9a1e43fab53))
+
 ## [1.0.6](https://github.com/tzzs/storops/compare/storops-v1.0.5...storops-v1.0.6) (2026-09-14)
 
 
