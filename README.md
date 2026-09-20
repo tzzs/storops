@@ -51,8 +51,10 @@ coverage.
 
 ## Requirements
 
-- **Python 3.11+** — the only implementation (`src/storops/`); `python3`/
-  `python` needs to be on `PATH`. No `pip install` is required for the
+- **Python 3.9+** — the only implementation (`src/storops/`); `python3`/
+  `python` needs to be on `PATH`. 3.9 is the floor deliberately: it is what
+  a stock macOS ships as `python3`, and StorOps is most useful on a machine
+  nobody has set a modern toolchain up on yet. No `pip install` is required for the
   common "cloned into a skills directory" install path — `python -m storops`
   works straight out of the checkout.
 - **Windows**: NTFS volumes. [WizTree](https://diskanalyzer.com/) is
@@ -79,7 +81,7 @@ StorOps is a plain agent skill: a directory with a `SKILL.md` at its root,
 discovered by name and description rather than invoked as a slash command. No
 build step and no `pip install` required — the agent reads `SKILL.md` to
 decide when to use the skill, then invokes `python -m storops <verb>`
-directly. The only runtime requirements are Python 3.11+ and, on Windows,
+directly. The only runtime requirements are Python 3.9+ and, on Windows,
 WizTree — see [Requirements](#requirements) above.
 
 ### Ask your agent to install it (recommended)

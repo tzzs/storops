@@ -45,8 +45,9 @@ Windows token;只有关键系统路径规则(`rules/windows.yaml`/`linux.yaml`/
 
 ## 环境要求
 
-- **Python 3.11+**——唯一的实现(`src/storops/`);`python3`/`python`
-  需要在 `PATH` 上。最常见的"克隆进 skills 目录"安装方式不需要
+- **Python 3.9+**——唯一的实现(`src/storops/`);`python3`/`python`
+  需要在 `PATH` 上。下限定在 3.9 是刻意的:macOS 自带的 `python3` 就是
+  3.9,而 StorOps 最该派上用场的,恰恰是还没配好现代工具链的机器。最常见的"克隆进 skills 目录"安装方式不需要
   `pip install`——从 checkout 目录直接运行 `python -m storops` 即可。
 - **Windows**:NTFS 卷。[WizTree](https://diskanalyzer.com/) 是可选的——
   StorOps 自带的原生扫描(`os.scandir`,以工作队列在整棵扫描树内并行;
@@ -67,7 +68,7 @@ Windows token;只有关键系统路径规则(`rules/windows.yaml`/`linux.yaml`/
 StorOps 是一个标准的 agent skill:一个根目录带有 `SKILL.md` 的目录,agent 依据
 其 name/description 自动发现并调用,而非以 slash command 的形式手动触发。无需
 构建步骤,也无需 `pip install`——agent 会读取 `SKILL.md` 来判断何时使用该
-skill,然后直接调用 `python -m storops <verb>`。运行时依赖是 Python 3.11+,
+skill,然后直接调用 `python -m storops <verb>`。运行时依赖是 Python 3.9+,
 以及在 Windows 上的 WizTree,详见上方[环境要求](#环境要求)。
 
 ### 直接让 Agent 帮你安装(推荐)
