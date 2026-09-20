@@ -7,11 +7,18 @@ name = "storops"
 version = "2.0.0a0"
 description = "Storage Operations for AI Agents -- cross-platform disk/storage diagnosis, cleanup, and migration CLI."
 readme = "README.md"
-requires-python = ">=3.11"
+# 3.9 is the floor because that is what a stock macOS ships as
+# `python3` (Xcode CLT) and what RHEL 9 ships -- StorOps is most useful on
+# a machine the user has NOT already set up a modern toolchain on, so
+# demanding 3.11 there turned `pip install storops` into a hard stop for
+# no reason: the whole test suite passes unmodified on 3.9, and CI now
+# pins the floor so it stays that way.
+requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "tzzs" }]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
     "Operating System :: OS Independent",
     "Environment :: Console",
 ]
@@ -23,11 +30,30 @@ dev = ["pytest>=8"]
 [project.scripts]
 storops = "storops.cli:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+# `rules/` deliberately lives at the repo root, not under src/storops/: it
+# is agent-facing content that SKILL.md/README.md point at by that path,
+# and rules/README.md documents it as the place to add rules. Mapping it
+# in as the `storops.rules` package is what gets those YAML files into the
+# wheel -- without this, `pip install storops` produced a package whose
+# every command died with "could not locate the rules/ directory", since
+# package-data patterns can only ever match files that are already inside
+# a package directory. An explicit `packages` list is required because
+# `packages.find` cannot discover a package that lives outside `where`;
+# tests/unit/test_packaging.py keeps the list from drifting.
+[tool.setuptools]
+package-dir = { "" = "src", "storops.rules" = "rules" }
+packages = [
+    "storops",
+    "storops.core",
+    "storops.output",
+    "storops.platform",
+    "storops.platform.backends",
+    "storops.platform.windows",
+    "storops.rules",
+]
 
 [tool.setuptools.package-data]
-storops = ["rules/*.yaml"]
+"storops.rules" = ["*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

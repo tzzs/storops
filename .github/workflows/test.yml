@@ -12,13 +12,17 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        # 3.9 is the declared floor (a stock macOS `python3` and RHEL 9 both
+        # ship it) and is tested so it stays real; 3.13 catches deprecations
+        # early. The middle of the range is left to those two to bracket.
+        python-version: ["3.9", "3.13"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install gdu (Linux/macOS only -- the preferred scan backend, du is the fallback)
         if: runner.os != 'Windows'
@@ -34,3 +38,66 @@ jobs:
 
       - name: Run unit + integration tests
         run: pytest tests/unit tests/integration -q
+
+  # The backend a real Mac actually uses. gdu is a `brew install` away, so
+  # the job above never exercises BSD `du` -- which is where macOS' own
+  # quirks live (its -a and -d are mutually exclusive, so an unguarded
+  # file-level scan is unbounded in depth; a `storops scan ~` cost ~2.6GB
+  # peak RSS before that was caught). Without this job those regressions
+  # are invisible on every runner.
+  test-macos-without-gdu:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Confirm gdu is absent, so the du backend is the one under test
+        run: |
+          ! command -v gdu || { echo "gdu unexpectedly on PATH"; exit 1; }
+
+      - name: Install storops (editable) + dev dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run unit + integration tests
+        run: pytest tests/unit tests/integration -q
+
+      - name: The du backend really is what got selected
+        run: |
+          python - <<'PY'
+          from storops import platform
+          backend = platform.get_scan_backend()
+          assert backend.name == "Du", backend.name
+          print("scan backend:", backend.name)
+          PY
+
+  # `pip install -e .` leaves the repo-root rules/ directory reachable, so it
+  # cannot tell whether the built distribution actually ships the rule files.
+  # It did not: every command in an installed storops failed with "could not
+  # locate the rules/ directory" until this was caught.
+  test-installed-wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Build the wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Install it somewhere the source tree cannot be reached
+        run: |
+          python -m venv /tmp/wheel-venv
+          /tmp/wheel-venv/bin/pip install dist/*.whl
+
+      - name: The installed package can identify a path (i.e. it found its rules)
+        run: |
+          cd /tmp
+          /tmp/wheel-venv/bin/storops identify /tmp --json
+          /tmp/wheel-venv/bin/storops scan /tmp --json > /dev/null

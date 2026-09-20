@@ -79,11 +79,24 @@ commands ad hoc; the user should not need to know command names.
     (e.g. "by the way, installing gdu would make these scans noticeably
     faster") -- don't repeat it on every single command, and don't mention it
     at all on Windows or when it's `null`.
+14. On macOS, a scan's per-directory sizes will not add up to the volume's
+    used space, and you must not present them as if they should. Two
+    separate reasons: StorOps already prunes APFS firmlinks (`/Users` and
+    `/System/Volumes/Data/Users` are literally the same directory, and an
+    unpruned `du /` counts the user's whole home twice), but APFS *block
+    sharing* -- file clones, and Time Machine local snapshots -- remains,
+    and no per-path size can attribute shared blocks to one path. Report
+    the ranking and the individual sizes, which are sound; do not compute
+    "everything else" by subtracting the total from the drive's used
+    figure, and do not tell the user their disk is lying to them.
 
 ## Workflow: "why is my drive full?"
 
 1. `storops scan C:\` (or the drive the user mentioned) for top-level
-   consumers and free space.
+   consumers and free space. On macOS scan `/` -- not `/System/Volumes/Data`:
+   StorOps prunes the Data volume's firmlinked duplicates when it is handed
+   the real root, and scanning the Data volume directly reports the same
+   content under its uglier internal paths.
 2. To see what's inside several large entries at once, prefer one `storops
    search <path> --folders --max-depth 2` (bump to `3` if two levels isn't
    enough) over `storops inspect`-ing each one individually. `inspect`

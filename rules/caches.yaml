@@ -142,3 +142,23 @@
     this as a large-consumer candidate for the user to review, never
     auto-classifies individual files as safe to delete.
   notes: Report largest/oldest files here for the user's own review rather than proposing bulk deletion.
+
+- id: macos-user-logs
+  application: macOS
+  category: os-temp
+  path_patterns:
+    - "%HOME%/Library/Logs/*"
+  confidence: 0.85
+  owner: user
+  purpose: >
+    Per-user application and crash logs, written by apps and by macOS'
+    diagnostic reporting.
+  deletable: true
+  migratable: false
+  cleanup_risk: low
+  cleanup_consequence: >
+    Only historical diagnostics are lost; nothing here is needed for any
+    application to run.
+  notes: >
+    The system-wide counterpart under /Library/Logs is covered by
+    macos.yaml's critical /Library rule and is never offered.

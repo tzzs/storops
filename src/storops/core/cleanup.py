@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -44,6 +45,32 @@ def _probe_path(pattern: str) -> str | None:
     return rules.expand_pattern_tokens(stripped)
 
 
+# Sizing one probe path means walking its whole subtree, so a plan over a
+# handful of caches is almost entirely time spent waiting on filesystem
+# metadata -- measured at 6.3s for nine probes on a real Mac, all of it
+# serialized for no reason. Kept modest: past this the backends' own
+# per-call subprocesses start competing for the same disk.
+_PROBE_CONCURRENCY = 8
+
+
+def _sized_probes(backend, probe_paths: list[str], *, admin: bool) -> list:
+    """backend.path_size() for each path, concurrently where the backend
+    says that is safe.
+
+    Opt-in per backend rather than assumed: the Windows native backend
+    resets per-call state on `self` (its warnings list) and already splits
+    its own walk across threads internally, so sizing several paths at once
+    through it would both clobber that state and oversubscribe the disk.
+    Backends that are safe declare `path_size_is_concurrent = True`.
+    """
+    if len(probe_paths) < 2 or not getattr(backend, "path_size_is_concurrent", False):
+        return [backend.path_size(p, admin=admin) for p in probe_paths]
+
+    workers = min(_PROBE_CONCURRENCY, len(probe_paths))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(lambda p: backend.path_size(p, admin=admin), probe_paths))
+
+
 def plan(max_risk: str = "low", *, out_file: str | None = None, admin: bool = False) -> CleanupPlan:
     backend = platform_pkg.get_scan_backend()
     deletable_rules = [r for r in rules.load_rules() if r.deletable]
@@ -60,11 +87,11 @@ def plan(max_risk: str = "low", *, out_file: str | None = None, admin: bool = Fa
             # double-counted it when keyed on the raw expansion.
             probes.setdefault(resolve_path(probe), rule)
 
+    existing = [(p, r) for p, r in probes.items() if os.path.exists(p)]
+    sizes = _sized_probes(backend, [p for p, _ in existing], admin=admin)
+
     items: list[CleanupItem] = []
-    for probe_path, rule in probes.items():
-        if not os.path.exists(probe_path):
-            continue
-        sized = backend.path_size(probe_path, admin=admin)
+    for (probe_path, rule), sized in zip(existing, sizes):
         if not sized or sized.size_bytes <= 0:
             continue
 

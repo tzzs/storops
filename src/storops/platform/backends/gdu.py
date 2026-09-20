@@ -222,6 +222,12 @@ class GduBackend:
 
     name = "Gdu"
 
+    # Each path_size() call is its own `gdu` subprocess over its own
+    # target, with no state kept on this instance between calls -- see
+    # core/cleanup.py's _sized_probes(), which sizes every probe path
+    # concurrently when a backend declares this.
+    path_size_is_concurrent = True
+
     def scan(
         self,
         path: str,

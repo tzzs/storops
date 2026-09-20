@@ -9,6 +9,7 @@ on the machine running the tests.
 """
 from __future__ import annotations
 
+import io
 import subprocess
 import sys
 
@@ -207,6 +208,27 @@ def test_du_flavor_falls_back_to_bsd_when_du_missing(monkeypatch):
     assert backend._du_flavor() == "bsd"
 
 
+class _FakePopen:
+    """Minimal stand-in for subprocess.Popen as scan() uses it: an
+    iterable text-mode stdout plus wait()/close()."""
+
+    def __init__(self, stdout: str):
+        self.stdout = io.StringIO(stdout)
+        self.returncode = 0
+
+    def wait(self):
+        return self.returncode
+
+
+def _fake_popen_returning(stdout, *, recorder=None):
+    def factory(args, **kwargs):
+        if recorder is not None:
+            recorder.append(args)
+        return _FakePopen(stdout)
+
+    return factory
+
+
 def test_scan_parses_bsd_style_kilobyte_output(monkeypatch, tmp_path):
     """Force the BSD parsing branch (size in 1024-byte blocks, scaled up)
     regardless of the real `du` installed on the test runner, using real
@@ -216,28 +238,97 @@ def test_scan_parses_bsd_style_kilobyte_output(monkeypatch, tmp_path):
     backend = DuBackend()
     backend._flavor = "bsd"  # skip flavor probing
 
-    def fake_run(args, **kwargs):
-        assert "-k" in args
-        # BSD `du -a -k` output: <blocks>\t<path>
-        stdout = f"4\t{tmp_path / 'sub'}\n8\t{tmp_path}\n"
-        return _FakeCompleted(returncode=0, stdout=stdout)
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    args_seen: list[list[str]] = []
+    # BSD `du -a -k` output: <blocks>\t<path>
+    stdout = f"4\t{tmp_path / 'sub'}\n8\t{tmp_path}\n"
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen_returning(stdout, recorder=args_seen))
 
     entries = backend.scan(str(tmp_path), export_folders=True, export_files=True, max_depth=1)
+    assert "-k" in args_seen[0]
     assert len(entries) == 1
     assert entries[0].full_name == str(tmp_path / "sub")
     assert entries[0].size_bytes == 4 * 1024  # scaled from 1024-byte blocks
 
 
-def test_scan_raises_permission_denied_when_du_fails_with_no_output(monkeypatch, tmp_path):
+def test_scan_raises_permission_denied_when_du_produces_no_output(monkeypatch, tmp_path):
     backend = DuBackend()
     backend._flavor = "gnu"
 
-    def fake_run(args, **kwargs):
-        return _FakeCompleted(returncode=1, stdout="", stderr="du: Permission denied")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen_returning(""))
 
     with pytest.raises(PermissionDeniedError):
         backend.scan(str(tmp_path))
+
+
+# --- macOS/BSD flag selection (the expensive `-a` is opt-in) ----------------
+
+
+def _args_for(monkeypatch, backend, tmp_path, **scan_kwargs):
+    args_seen: list[list[str]] = []
+    stdout = f"8\t{tmp_path}\n"
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen_returning(stdout, recorder=args_seen))
+    backend.scan(str(tmp_path), **scan_kwargs)
+    return args_seen[0]
+
+
+def test_bsd_directory_only_scan_skips_dash_a_and_limits_depth_natively(monkeypatch, tmp_path):
+    """The scan/inspect hot path (top_entries(include_files=False)) must
+    not ask BSD du for file-level rows: `-a` there is unbounded-depth by
+    necessity (BSD's -a and -d are mutually exclusive), which on a real
+    macOS home directory meant millions of rows and ~2.6GB peak RSS to
+    produce ~15 rows of output.
+    """
+    backend = DuBackend()
+    backend._flavor = "bsd"
+
+    args = _args_for(
+        monkeypatch, backend, tmp_path, export_folders=True, export_files=False, max_depth=1
+    )
+
+    assert "-a" not in args
+    assert args[args.index("-d") + 1] == "1"
+
+
+def test_bsd_file_level_scan_still_uses_dash_a_without_depth_flag(monkeypatch, tmp_path):
+    backend = DuBackend()
+    backend._flavor = "bsd"
+
+    args = _args_for(
+        monkeypatch, backend, tmp_path, export_folders=True, export_files=True, max_depth=2
+    )
+
+    assert "-a" in args
+    assert "-d" not in args  # mutually exclusive with -a on BSD; filtered in Python
+
+
+def test_gnu_directory_only_scan_skips_dash_a(monkeypatch, tmp_path):
+    backend = DuBackend()
+    backend._flavor = "gnu"
+
+    args = _args_for(
+        monkeypatch, backend, tmp_path, export_folders=True, export_files=False, max_depth=1
+    )
+
+    assert "-a" not in args
+    assert "--max-depth=1" in args
+
+
+def test_non_empty_directories_are_classified_without_stat(monkeypatch, tmp_path):
+    """In `-a` mode du emits a directory after its contents, so a
+    directory is already known to be one by the time its own row arrives
+    -- no os.path.isdir() call needed. Proven by pointing the backend at
+    paths that do not exist on disk: isdir() would report False for all
+    of them.
+    """
+    backend = DuBackend()
+    backend._flavor = "gnu"
+    ghost = tmp_path / "ghost"
+    stdout = f"10\t{ghost / 'inner' / 'f.bin'}\n20\t{ghost / 'inner'}\n30\t{ghost}\n40\t{tmp_path}\n"
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen_returning(stdout))
+
+    entries = backend.scan(str(tmp_path), export_folders=True, export_files=True)
+
+    by_path = {e.full_name: e.is_folder for e in entries}
+    assert by_path[str(ghost)] is True
+    assert by_path[str(ghost / "inner")] is True
+    assert by_path[str(ghost / "inner" / "f.bin")] is False
