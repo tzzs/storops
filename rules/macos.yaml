@@ -8,12 +8,11 @@
 # migratable: false. StorOps must never offer these for cleanup or migration,
 # regardless of what the user asks for.
 #
-# NOTE: this is a starter set covering the same *kind* of paths windows.yaml
-# covers (OS itself, installed apps, user profile/library, user documents) --
-# it does not yet attempt parity with ai-models.yaml/applications.yaml/
-# caches.yaml, whose path_patterns are still Windows-token-only. Extending
-# those to macOS equivalents (LM Studio, Ollama, Docker Desktop, npm/pip
-# caches under %CACHES%/%XDG_CACHE_HOME%, etc.) is separate follow-up work.
+# NOTE: this file covers only the macOS paths StorOps must never classify as
+# safe to touch. The macOS *reclaimable* paths live where their application
+# does: applications.yaml carries the Xcode/CoreSimulator/Homebrew rules and
+# the %CACHES%/%APP_SUPPORT% patterns for the cross-platform tools, and
+# caches.yaml carries ~/Library/Logs.
 
 - id: macos-system
   application: macOS

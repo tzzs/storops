@@ -357,3 +357,167 @@
   notes: >
     No Linux pattern here by design -- the Adobe Creative Cloud desktop
     suite does not ship a Linux build, so there is no real path to match.
+
+# --- Apple developer toolchain (macOS) --------------------------------------
+# The largest reclaimable consumers on a Mac used for development, and all
+# previously "unknown"/critical -- which meant StorOps could see tens of GB
+# in a scan and had nothing to say about any of it.
+
+- id: xcode-derived-data
+  application: Xcode
+  category: ide-cache
+  path_patterns:
+    - "%HOME%/Library/Developer/Xcode/DerivedData/*"
+  confidence: 0.95
+  owner: user
+  purpose: >
+    Per-project build intermediates, module caches, and indexes that Xcode
+    regenerates from the project source on the next build.
+  deletable: true
+  migratable: false
+  cleanup_risk: low
+  cleanup_consequence: >
+    The next build of each affected project is a full rebuild (slower
+    once); nothing that is not reproducible from source is lost.
+  notes: >
+    Routinely the single largest directory under ~/Library/Developer on a
+    machine with more than a couple of Xcode projects.
+
+- id: xcode-device-support
+  application: Xcode
+  category: ide-cache
+  path_patterns:
+    - "%HOME%/Library/Developer/Xcode/iOS DeviceSupport/*"
+    - "%HOME%/Library/Developer/Xcode/watchOS DeviceSupport/*"
+    - "%HOME%/Library/Developer/Xcode/tvOS DeviceSupport/*"
+  confidence: 0.95
+  owner: user
+  purpose: >
+    Debug symbols copied off each physical device the first time it is
+    attached, kept per OS build -- so one entry accumulates per iOS version
+    ever connected, including long-obsolete ones.
+  deletable: true
+  migratable: false
+  cleanup_risk: medium
+  cleanup_consequence: >
+    Re-copied off the device (a few minutes) the next time that exact OS
+    build is attached for debugging; symbolication of already-captured
+    crash logs from that build is lost until then.
+
+- id: xcode-archives
+  application: Xcode
+  category: build-output
+  path_patterns:
+    - "%HOME%/Library/Developer/Xcode/Archives/*"
+  confidence: 0.95
+  owner: user
+  purpose: >
+    Archived builds with their dSYMs -- what App Store submissions were cut
+    from, and the only way to symbolicate crash reports from a shipped build.
+  deletable: false
+  migratable: true
+  migration_method: manual
+  migration_config_hint: >
+    Move the Archives directory to external storage by hand; Xcode's
+    Organizer reads whatever is present at this path.
+  cleanup_risk: high
+  cleanup_consequence: >
+    Not reproducible: deleting an archive permanently loses the ability to
+    symbolicate crash reports from the build it came from.
+  notes: >
+    Deliberately never offered for deletion even though it sits beside
+    DerivedData and looks similar -- these are shipping artifacts.
+
+- id: coresimulator-caches
+  application: Xcode Simulator
+  category: ide-cache
+  path_patterns:
+    - "%HOME%/Library/Developer/CoreSimulator/Caches/*"
+  confidence: 0.95
+  owner: user
+  purpose: Downloaded simulator runtime disk images and their extraction scratch space.
+  deletable: true
+  migratable: false
+  cleanup_risk: medium
+  cleanup_consequence: >
+    Simulator runtimes are re-downloaded from Apple (several GB each) the
+    next time one is needed.
+
+- id: coresimulator-devices
+  application: Xcode Simulator
+  category: application-data
+  path_patterns:
+    - "%HOME%/Library/Developer/CoreSimulator/Devices/*"
+  confidence: 0.95
+  owner: user
+  purpose: >
+    One full disk image per created simulator device, including every app
+    installed into it and its data.
+  deletable: true
+  migratable: false
+  cleanup_risk: high
+  cleanup_consequence: >
+    Deleting these directories by hand leaves CoreSimulator's own device
+    index pointing at devices that no longer exist.
+  notes: >
+    Reclaim this through Xcode itself -- `xcrun simctl delete unavailable`
+    removes devices for uninstalled runtimes and keeps the index
+    consistent. Classified high on purpose so `cleanup plan` identifies it
+    but never proposes deleting it.
+
+- id: homebrew-cache
+  application: Homebrew
+  category: package-manager-cache
+  path_patterns:
+    - "%CACHES%/Homebrew/*"
+    - "%HOME%/Library/Caches/Homebrew/*"
+    - "%XDG_CACHE_HOME%/Homebrew/*"
+  confidence: 0.95
+  owner: user
+  purpose: Downloaded bottles, source tarballs, and their partial downloads.
+  deletable: true
+  migratable: false
+  cleanup_risk: low
+  cleanup_consequence: >
+    Re-downloaded on the next install or upgrade of the affected formula;
+    installed software is unaffected.
+  notes: "`brew cleanup -s` does the same thing through Homebrew itself."
+
+# --- Cross-platform build caches missing from the rule base entirely --------
+
+- id: gradle-cache
+  application: Gradle
+  category: package-manager-cache
+  path_patterns:
+    - "%HOME%/.gradle/caches/*"
+    - "%USERPROFILE%\\.gradle\\caches\\*"
+  confidence: 0.9
+  owner: user
+  purpose: Resolved dependency jars, build-script compilation output, and transformed artifacts.
+  deletable: true
+  migratable: true
+  migration_method: app-config
+  migration_config_hint: >
+    Set GRADLE_USER_HOME to the new location (Gradle puts caches/ beneath it).
+  cleanup_risk: medium
+  cleanup_consequence: >
+    Every dependency is re-downloaded and every build script recompiled on
+    the next build; offline builds stop working until then.
+
+- id: cargo-registry
+  application: Cargo (Rust)
+  category: package-manager-cache
+  path_patterns:
+    - "%HOME%/.cargo/registry/*"
+    - "%USERPROFILE%\\.cargo\\registry\\*"
+  confidence: 0.9
+  owner: user
+  purpose: Downloaded crate sources and the registry index.
+  deletable: true
+  migratable: true
+  migration_method: app-config
+  migration_config_hint: "Set CARGO_HOME to the new location."
+  cleanup_risk: medium
+  cleanup_consequence: >
+    Every dependency is re-downloaded from crates.io on the next build;
+    offline builds stop working until then.

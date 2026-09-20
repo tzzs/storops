@@ -8,9 +8,9 @@ path is from its name alone (see [`docs/DESIGN.md`](../docs/DESIGN.md) §3.3).
 
 | File | Covers |
 |---|---|
-| `ai-models.yaml` | AI/ML model weights and inference-tool caches (LM Studio, Ollama, Hugging Face, ComfyUI/Stable Diffusion, PyTorch/CUDA) -- `path_patterns` are currently Windows-token-only |
-| `applications.yaml` | Dev tooling (npm, pnpm, pip, uv, conda, Git, VS Code, JetBrains, Visual Studio, Docker, WSL) and general consumer apps (Steam, Chrome, Edge, Discord, Adobe) -- `path_patterns` are currently Windows-token-only |
-| `caches.yaml` | Generic OS/browser/temp caches not owned by one specific application above -- `path_patterns` are currently Windows-token-only |
+| `ai-models.yaml` | AI/ML model weights and inference-tool caches (LM Studio, Ollama, Hugging Face, ComfyUI/Stable Diffusion, PyTorch/CUDA) |
+| `applications.yaml` | Dev tooling (npm, pnpm, pip, uv, conda, Git, VS Code, JetBrains, Visual Studio, Docker, WSL, Gradle, Cargo, Homebrew, the Xcode/CoreSimulator toolchain) and general consumer apps (Steam, Chrome, Edge, Discord, Adobe) |
+| `caches.yaml` | Generic OS/browser/temp caches not owned by one specific application above |
 | `windows.yaml` | Windows system paths StorOps must never classify as safe to touch |
 | `linux.yaml` | Linux system paths StorOps must never classify as safe to touch |
 | `macos.yaml` | macOS system paths StorOps must never classify as safe to touch |
